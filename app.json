@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "Liqueur Log",
+    "slug": "liqueur-log",
+    "scheme": "liqueur-log",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      "expo-status-bar"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    }
+  }
+}
