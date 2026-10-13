@@ -93,7 +93,7 @@ export default function ManageStaffScreen() {
                   setFormError(null);
                   setEditor({ mode: 'create' });
                 }}
-                className="mt-5 h-14 items-center justify-center rounded-3xl bg-accent"
+                className="mt-5 h-14 items-center justify-center rounded-lg bg-accent"
               >
                 <Text className="text-body font-semibold text-accent-ink">{t('staff.add')}</Text>
               </Pressable>
@@ -125,14 +125,14 @@ export default function ManageStaffScreen() {
                       setFormError(null);
                       setEditor({ mode: 'edit', staff: item });
                     }}
-                    className="h-12 flex-1 items-center justify-center rounded-2xl border border-line bg-canvas"
+                    className="h-12 flex-1 items-center justify-center rounded-lg border border-line bg-canvas"
                   >
                     <Text className="text-base font-semibold text-ink">{t('staff.edit')}</Text>
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
                     onPress={() => changeAccess(item, !item.isActive)}
-                    className="h-12 flex-1 items-center justify-center rounded-2xl border border-line bg-canvas"
+                    className="h-12 flex-1 items-center justify-center rounded-lg border border-line bg-canvas"
                   >
                     <Text className="text-base font-semibold text-ink">
                       {item.isActive ? t('staff.deactivate') : t('staff.activate')}
@@ -181,7 +181,7 @@ export default function ManageStaffScreen() {
                 <Pressable
                   accessibilityRole="button"
                   onPress={() => setPendingDeactivate(null)}
-                  className="h-14 flex-1 items-center justify-center rounded-2xl border border-line bg-canvas"
+                  className="h-14 flex-1 items-center justify-center rounded-lg border border-line bg-canvas"
                 >
                   <Text className="text-base font-semibold text-ink">{t('staff.cancel')}</Text>
                 </Pressable>
@@ -194,7 +194,7 @@ export default function ManageStaffScreen() {
                       setFormError(changeError instanceof Error ? changeError.message : t('staff.updateError'));
                     });
                   }}
-                  className="h-14 flex-1 items-center justify-center rounded-2xl bg-danger"
+                  className="h-14 flex-1 items-center justify-center rounded-lg bg-danger"
                 >
                   <Text className="text-base font-semibold text-accent-ink">{t('staff.deactivate')}</Text>
                 </Pressable>

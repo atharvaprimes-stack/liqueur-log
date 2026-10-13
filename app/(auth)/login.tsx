@@ -128,7 +128,7 @@ export default function LoginScreen() {
               onPress={() => {
                 void submit();
               }}
-              className="mt-4 h-14 items-center justify-center rounded-xl bg-accent disabled:opacity-40"
+              className="mt-4 h-14 items-center justify-center rounded-lg bg-accent disabled:opacity-40"
             >
               {submitting ? (
                 <ActivityIndicator color={palette.accentInk} />

@@ -94,7 +94,7 @@ export function StaffFormModal({
               accessibilityRole="button"
               disabled={saving}
               onPress={onClose}
-              className="h-14 flex-1 items-center justify-center rounded-2xl border border-line bg-canvas"
+              className="h-14 flex-1 items-center justify-center rounded-lg border border-line bg-canvas"
             >
               <Text className="text-base font-semibold text-ink">{t('staff.cancel')}</Text>
             </Pressable>
@@ -102,7 +102,7 @@ export function StaffFormModal({
               accessibilityRole="button"
               disabled={saving}
               onPress={() => onSubmit({ name, mobileNumber, mpin })}
-              className="h-14 flex-1 items-center justify-center rounded-2xl bg-accent disabled:opacity-60"
+              className="h-14 flex-1 items-center justify-center rounded-lg bg-accent disabled:opacity-60"
             >
               {saving ? (
                 <ActivityIndicator color={palette.accentInk} />

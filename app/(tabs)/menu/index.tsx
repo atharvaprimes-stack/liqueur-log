@@ -36,7 +36,7 @@ export default function MenuScreen() {
                 accessibilityRole="button"
                 accessibilityState={{ selected }}
                 onPress={() => setTheme(option)}
-                className={`min-h-[72px] justify-center rounded-3xl border px-5 py-4 ${
+                className={`min-h-[72px] justify-center rounded-lg border px-5 py-4 ${
                   selected ? 'border-accent bg-accent' : 'border-line bg-surface'
                 }`}
               >
@@ -63,7 +63,7 @@ export default function MenuScreen() {
                 toggleLanguage();
               }
             }}
-            className={`min-h-14 flex-1 items-center justify-center rounded-3xl border px-3 py-3 ${
+            className={`min-h-14 flex-1 items-center justify-center rounded-lg border px-3 py-3 ${
               language === 'en' ? 'border-accent bg-accent' : 'border-line bg-surface'
             }`}
           >
@@ -82,7 +82,7 @@ export default function MenuScreen() {
                 toggleLanguage();
               }
             }}
-            className={`min-h-14 flex-1 items-center justify-center rounded-3xl border px-3 py-3 ${
+            className={`min-h-14 flex-1 items-center justify-center rounded-lg border px-3 py-3 ${
               language === 'mr' ? 'border-accent bg-accent' : 'border-line bg-surface'
             }`}
           >
@@ -101,7 +101,7 @@ export default function MenuScreen() {
           <Pressable
             accessibilityRole="button"
             onPress={() => router.push('/menu/manage-staff')}
-            className="mt-4 h-14 items-center justify-center rounded-3xl bg-accent"
+            className="mt-4 h-14 items-center justify-center rounded-lg bg-accent"
           >
             <Text className="text-body font-semibold text-accent-ink">{t('menu.manageStaff')}</Text>
           </Pressable>
@@ -112,7 +112,7 @@ export default function MenuScreen() {
           onPress={() => {
             void logout().then(() => router.replace('/login'));
           }}
-          className="mt-8 h-14 items-center justify-center rounded-3xl border border-line bg-surface"
+          className="mt-8 h-14 items-center justify-center rounded-lg border border-line bg-surface"
         >
           <Text className="text-body font-semibold text-ink">{t('common.signOut')}</Text>
         </Pressable>

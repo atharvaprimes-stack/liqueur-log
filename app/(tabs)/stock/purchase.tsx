@@ -1,7 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -10,7 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Redirect, router } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { ItemPickerModal } from '../../../src/components/ItemPickerModal';
@@ -26,7 +25,14 @@ import {
   type PaymentType,
   type StockItem,
 } from '../../../src/domain/models/inventory';
-import { formatInrFromPaise, parseQuantity, parseRupeeToPaise, sanitizeQuantityInput, sanitizeRupeeInput } from '../../../src/domain/money';
+import {
+  formatInrFromPaise,
+  formatRupeeInput,
+  parseQuantity,
+  parseRupeeToPaise,
+  sanitizeQuantityInput,
+  sanitizeRupeeInput,
+} from '../../../src/domain/money';
 import { useInventory } from '../../../src/hooks/useInventory';
 import { useTheme } from '../../../src/theme/theme-context';
 
@@ -35,6 +41,8 @@ export default function PurchaseScreen() {
   const { palette } = useTheme();
   const { currentUser, isReady } = useAuth();
   const { items, isLoading, errorCode, savePurchase } = useInventory();
+  const { itemId } = useLocalSearchParams<{ itemId?: string | string[] }>();
+  const seededItemId = useRef<string | null>(null);
   const [supplierName, setSupplierName] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [paymentType, setPaymentType] = useState<PaymentType | null>(null);
@@ -45,13 +53,27 @@ export default function PurchaseScreen() {
   const [formError, setFormError] = useState<string | null>(null);
   const summary = useMemo(() => summarizeDraft(lines), [lines]);
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
-  const canSave =
-    supplierName.trim().length > 0 &&
-    invoiceNumber.trim().length > 0 &&
-    paymentType !== null &&
-    summary.complete &&
-    !saving &&
-    !saved;
+  const requestedItemId = Array.isArray(itemId) ? itemId[0] : itemId;
+
+  useEffect(() => {
+    if (!requestedItemId || seededItemId.current === requestedItemId) {
+      return;
+    }
+    const item = itemsById.get(requestedItemId);
+    if (!item) {
+      return;
+    }
+    seededItemId.current = requestedItemId;
+    setLines((current) => {
+      if (current.some((line) => line.itemId === item.id)) {
+        return current;
+      }
+      return [
+        { itemId: item.id, quantity: '', unitPrice: formatRupeeInput(item.purchasePrice) },
+        ...current,
+      ];
+    });
+  }, [itemsById, requestedItemId]);
 
   if (!isReady) {
     return null;
@@ -70,7 +92,26 @@ export default function PurchaseScreen() {
   };
 
   const onSave = async () => {
-    if (!canSave || !paymentType) {
+    if (saving || saved) {
+      return;
+    }
+
+    const supplier = supplierName.trim();
+    const invoice = invoiceNumber.trim();
+    if (!supplier) {
+      setFormError('supplier');
+      return;
+    }
+    if (!invoice) {
+      setFormError('invoice');
+      return;
+    }
+    if (!paymentType) {
+      setFormError('payment');
+      return;
+    }
+    if (!summary.complete) {
+      setFormError(summary.issue ?? 'lines');
       return;
     }
 
@@ -84,12 +125,9 @@ export default function PurchaseScreen() {
         lines,
       });
       setSaved(true);
-      setSaving(false);
-      Alert.alert(t('stock.purchase.savedTitle'), t('stock.purchase.savedBody', { invoice: invoiceNumber.trim() }), [
-        { text: t('stock.purchase.ok'), onPress: () => router.back() },
-      ]);
     } catch (error) {
       setFormError(inventoryErrorCode(error));
+    } finally {
       setSaving(false);
     }
   };
@@ -132,7 +170,7 @@ export default function PurchaseScreen() {
                 accessibilityRole="button"
                 accessibilityState={{ selected }}
                 onPress={() => setPaymentType(type)}
-                className={`mb-3 min-h-[72px] justify-center rounded-3xl border px-4 py-3 ${
+                className={`mb-3 min-h-[72px] justify-center rounded-lg border px-4 py-3 ${
                   selected ? 'border-accent bg-accent' : 'border-line bg-surface'
                 }`}
               >
@@ -151,7 +189,7 @@ export default function PurchaseScreen() {
             accessibilityRole="button"
             disabled={isLoading || items.length === 0}
             onPress={() => setPickerOpen(true)}
-            className="h-14 items-center justify-center rounded-3xl bg-accent disabled:opacity-50"
+            className="h-14 items-center justify-center rounded-lg bg-accent disabled:opacity-50"
           >
             {isLoading ? (
               <ActivityIndicator color={palette.accentInk} />
@@ -183,36 +221,57 @@ export default function PurchaseScreen() {
         </ScrollView>
 
         <View className="border-t border-line bg-surface px-4 py-3">
-          <Text className="text-sm text-muted">{t('stock.purchase.total')}</Text>
-          <Text className="text-title font-bold text-ink">{formatInrFromPaise(summary.totalPaise)}</Text>
-          {paymentType === 'Credit' ? (
-            <Text className="mt-1 text-sm text-muted">
-              {t('stock.purchase.due')}: {formatInrFromPaise(summary.totalPaise)}
-            </Text>
-          ) : paymentType ? (
-            <Text className="mt-1 text-sm font-semibold text-success">
-              {t('stock.purchase.paid')}: {formatInrFromPaise(summary.totalPaise)}
-            </Text>
-          ) : null}
-          {paymentType === 'Credit' ? (
-            <Text className="mt-1 text-sm text-muted">{t('stock.purchase.creditNote')}</Text>
-          ) : null}
-          {summary.issue ? <Text className="mt-3 text-sm text-danger">{t(`stock.errors.${summary.issue}`)}</Text> : null}
-          {formError ? <Text className="mt-3 text-sm text-danger">{t(`stock.errors.${formError}`)}</Text> : null}
-          <Pressable
-            accessibilityRole="button"
-            disabled={!canSave}
-            onPress={() => {
-              void onSave();
-            }}
-            className="mt-3 h-16 items-center justify-center rounded-full bg-accent disabled:opacity-50"
-          >
-            {saving ? (
-              <ActivityIndicator color={palette.accentInk} />
-            ) : (
-              <Text className="text-body font-bold text-accent-ink">{t('stock.purchase.save')}</Text>
-            )}
-          </Pressable>
+          {saved ? (
+            <View>
+              <Text className="text-base font-semibold text-ink">{t('stock.purchase.savedTitle')}</Text>
+              <Text className="mt-1 text-sm text-muted">
+                {t('stock.purchase.savedBody', { invoice: invoiceNumber.trim() })}
+              </Text>
+              {paymentType === 'Credit' ? (
+                <Text className="mt-1 text-sm text-muted">{t('stock.purchase.creditNote')}</Text>
+              ) : null}
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => router.back()}
+                className="mt-3 h-12 items-center justify-center rounded-lg bg-accent"
+              >
+                <Text className="text-base font-semibold text-accent-ink">{t('stock.purchase.ok')}</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View>
+              <Text className="text-sm text-muted">{t('stock.purchase.total')}</Text>
+              <Text className="text-title font-bold text-ink">{formatInrFromPaise(summary.totalPaise)}</Text>
+              {paymentType === 'Credit' ? (
+                <Text className="mt-1 text-sm text-muted">
+                  {t('stock.purchase.due')}: {formatInrFromPaise(summary.totalPaise)}
+                </Text>
+              ) : paymentType ? (
+                <Text className="mt-1 text-sm font-semibold text-success">
+                  {t('stock.purchase.paid')}: {formatInrFromPaise(summary.totalPaise)}
+                </Text>
+              ) : null}
+              {paymentType === 'Credit' ? (
+                <Text className="mt-1 text-sm text-muted">{t('stock.purchase.creditNote')}</Text>
+              ) : null}
+              {summary.issue ? <Text className="mt-3 text-sm text-danger">{t(`stock.errors.${summary.issue}`)}</Text> : null}
+              {formError ? <Text className="mt-3 text-sm text-danger">{t(`stock.errors.${formError}`)}</Text> : null}
+              <Pressable
+                accessibilityRole="button"
+                disabled={saving}
+                onPress={() => {
+                  void onSave();
+                }}
+                className="mt-3 h-12 items-center justify-center rounded-lg bg-accent disabled:opacity-50"
+              >
+                {saving ? (
+                  <ActivityIndicator color={palette.accentInk} />
+                ) : (
+                  <Text className="text-base font-semibold text-accent-ink">{t('stock.purchase.save')}</Text>
+                )}
+              </Pressable>
+            </View>
+          )}
         </View>
       </KeyboardAvoidingView>
 

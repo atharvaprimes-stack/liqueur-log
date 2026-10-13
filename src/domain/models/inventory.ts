@@ -58,6 +58,10 @@ export type StockSection = {
   data: StockItem[];
 };
 
+export type StockFacet = 'all' | 'low' | LiquorType;
+
+const LARGE_STOCK_CHANGE = 10;
+
 const VOLUME_KEYS: Record<number, string> = {
   180: 'stock.volume.nip',
   330: 'stock.volume.pint',
@@ -102,6 +106,79 @@ export function volumeMessage(item: Pick<StockItem, 'volumeMl' | 'liquorType'>):
   };
 }
 
+export function compactVolume(item: Pick<StockItem, 'volumeMl' | 'liquorType'>): {
+  key: string;
+  values: { ml?: number; amount?: number };
+} {
+  if (item.liquorType === 'Snacks') {
+    return { key: 'stock.volume.pack', values: { amount: item.volumeMl } };
+  }
+  return { key: 'stock.volume.ml', values: { ml: item.volumeMl } };
+}
+
+export function isLowStock(item: Pick<StockItem, 'currentStock' | 'lowStockThreshold'>): boolean {
+  return item.currentStock <= item.lowStockThreshold;
+}
+
+export function parseStockCount(input: string): number | null {
+  const trimmed = input.trim();
+  if (!/^\d{1,4}$/.test(trimmed)) {
+    return null;
+  }
+
+  const count = Number(trimmed);
+  if (!Number.isInteger(count) || count > 9999) {
+    return null;
+  }
+  return count;
+}
+
+export function stockChangeNeedsConfirm(currentStock: number, nextStock: number): 'zero' | 'large' | null {
+  if (nextStock === currentStock) {
+    return null;
+  }
+  if (nextStock === 0) {
+    return 'zero';
+  }
+  if (Math.abs(nextStock - currentStock) >= LARGE_STOCK_CHANGE) {
+    return 'large';
+  }
+  return null;
+}
+
+export function stockFacetCounts(items: StockItem[]): {
+  all: number;
+  low: number;
+  types: Record<LiquorType, number>;
+} {
+  const types: Record<LiquorType, number> = {
+    IMFL: 0,
+    Beer: 0,
+    Wine: 0,
+    Foreign: 0,
+    Country: 0,
+    Snacks: 0,
+  };
+  let low = 0;
+  for (const item of items) {
+    types[item.liquorType] += 1;
+    if (isLowStock(item)) {
+      low += 1;
+    }
+  }
+  return { all: items.length, low, types };
+}
+
+export function applyStockFacet(items: StockItem[], facet: StockFacet): StockItem[] {
+  if (facet === 'all') {
+    return items;
+  }
+  if (facet === 'low') {
+    return items.filter(isLowStock);
+  }
+  return items.filter((item) => item.liquorType === facet);
+}
+
 export function filterStock(items: StockItem[], query: string): StockItem[] {
   const needle = query.trim().toLowerCase();
   if (!needle) {
@@ -121,8 +198,9 @@ export function groupStock(items: StockItem[]): StockSection[] {
       .filter((item) => item.liquorType === liquorType)
       .sort(
         (left, right) =>
+          left.brand.localeCompare(right.brand, undefined, { sensitivity: 'base' }) ||
           left.volumeMl - right.volumeMl ||
-          left.nameEn.localeCompare(right.nameEn) ||
+          left.nameEn.localeCompare(right.nameEn, undefined, { sensitivity: 'base' }) ||
           left.itemCode.localeCompare(right.itemCode),
       );
     return data.length > 0 ? [{ liquorType, data }] : [];

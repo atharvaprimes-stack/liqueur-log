@@ -1,25 +1,18 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 
 import { useAuth } from '../context/auth-context';
-import { adjustItemStock, listStock, recordPurchase } from '../data/repositories/inventoryRepository';
-import { InventoryAccessError, inventoryErrorCode, type InventoryErrorCode } from '../domain/errors';
-import {
-  filterStock,
-  groupStock,
-  type PurchaseFormInput,
-  type StockItem,
-  type StockSection,
-} from '../domain/models/inventory';
+import { correctItemStock, listStock, recordPurchase } from '../data/repositories/inventoryRepository';
+import { InventoryAccessError, InventoryValidationError, inventoryErrorCode, type InventoryErrorCode } from '../domain/errors';
+import { type PurchaseFormInput, type StockItem } from '../domain/models/inventory';
 
-export function useInventory(search = ''): {
+export function useInventory(): {
   items: StockItem[];
-  sections: StockSection[];
   isLoading: boolean;
   errorCode: InventoryErrorCode | null;
   isAdmin: boolean;
-  adjustingId: string | null;
-  adjustStock: (itemId: string, delta: 1 | -1) => Promise<void>;
+  correctStock: (itemId: string, nextStock: number) => Promise<void>;
+  reload: () => Promise<void>;
   savePurchase: (form: PurchaseFormInput) => Promise<void>;
 } {
   const { currentUser } = useAuth();
@@ -29,9 +22,10 @@ export function useInventory(search = ''): {
   const [items, setItems] = useState<StockItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorCode, setErrorCode] = useState<InventoryErrorCode | null>(null);
-  const [adjustingId, setAdjustingId] = useState<string | null>(null);
   const revision = useRef(0);
-  const adjusting = useRef(false);
+  const pending = useRef(false);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
 
   useFocusEffect(
     useCallback(() => {
@@ -67,25 +61,64 @@ export function useInventory(search = ''): {
     }, [tenantId]),
   );
 
-  const adjustStock = useCallback(
-    async (itemId: string, delta: 1 | -1) => {
-      if (!isAdmin || !tenantId || !actorId || adjusting.current || (delta !== 1 && delta !== -1)) {
+  const reload = useCallback(async () => {
+    if (!tenantId) {
+      return;
+    }
+
+    const seen = revision.current;
+    try {
+      const next = await listStock(tenantId);
+      if (revision.current === seen) {
+        setItems(next);
+        setErrorCode(null);
+      }
+    } catch {
+      if (revision.current === seen) {
+        setErrorCode('unknown');
+      }
+    }
+  }, [tenantId]);
+
+  const correctStock = useCallback(
+    async (itemId: string, nextStock: number) => {
+      if (!isAdmin || !tenantId || !actorId) {
+        throw new InventoryAccessError();
+      }
+      if (!Number.isInteger(nextStock) || nextStock < 0 || nextStock > 9999) {
+        throw new InventoryValidationError('quantity');
+      }
+      if (pending.current) {
+        throw new InventoryValidationError('unknown');
+      }
+
+      const currentItem = itemsRef.current.find((item) => item.id === itemId);
+      if (!currentItem) {
+        throw new InventoryValidationError('unknown-item');
+      }
+      if (currentItem.currentStock === nextStock) {
         return;
       }
 
-      adjusting.current = true;
-      setAdjustingId(itemId);
+      const previousStock = currentItem.currentStock;
+      pending.current = true;
+      revision.current += 1;
+      setItems((current) => current.map((item) => (item.id === itemId ? { ...item, currentStock: nextStock } : item)));
+      setErrorCode(null);
+
       try {
-        await adjustItemStock({ tenantId, actorId, itemId, delta });
-        const next = await listStock(tenantId);
+        const updated = await correctItemStock({ tenantId, actorId, itemId, nextStock });
         revision.current += 1;
-        setItems(next);
-        setErrorCode(null);
+        setItems((current) => current.map((item) => (item.id === itemId ? updated : item)));
       } catch (error) {
+        revision.current += 1;
+        setItems((current) =>
+          current.map((item) => (item.id === itemId ? { ...item, currentStock: previousStock } : item)),
+        );
         setErrorCode(inventoryErrorCode(error));
+        throw error;
       } finally {
-        adjusting.current = false;
-        setAdjustingId(null);
+        pending.current = false;
       }
     },
     [actorId, isAdmin, tenantId],
@@ -101,16 +134,13 @@ export function useInventory(search = ''): {
     [actorId, isAdmin, tenantId],
   );
 
-  const sections = useMemo(() => groupStock(filterStock(items, search)), [items, search]);
-
   return {
     items,
-    sections,
     isLoading,
     errorCode,
     isAdmin,
-    adjustingId,
-    adjustStock,
+    correctStock,
+    reload,
     savePurchase,
   };
 }

@@ -104,6 +104,73 @@ export async function adjustItemStock(input: {
   return updated;
 }
 
+export async function correctItemStock(input: {
+  tenantId: string;
+  actorId: string;
+  itemId: string;
+  nextStock: number;
+}): Promise<StockItem> {
+  if (!Number.isInteger(input.nextStock) || input.nextStock < 0 || input.nextStock > 9999) {
+    throw new InventoryValidationError('quantity');
+  }
+
+  let updated: StockItem | null = null;
+  await withLockedTransaction(async (database) => {
+    await assertAdmin(database, input.tenantId, input.actorId);
+    const row = await database.getFirstAsync<ItemRow>(
+      `SELECT ${ITEM_COLUMNS} FROM items WHERE id = ? AND tenant_id = ?`,
+      [input.itemId, input.tenantId],
+    );
+    const current = row ? mapItem(row) : null;
+    if (!current) {
+      throw new InventoryValidationError('unknown-item');
+    }
+    if (current.currentStock === input.nextStock) {
+      updated = current;
+      return;
+    }
+
+    const result = await database.runAsync(
+      `UPDATE items
+       SET current_stock = ?
+       WHERE id = ? AND tenant_id = ?`,
+      [input.nextStock, input.itemId, input.tenantId],
+    );
+    if (result.changes !== 1) {
+      throw new InventoryValidationError('unknown-item');
+    }
+
+    const nextRow = await database.getFirstAsync<ItemRow>(
+      `SELECT ${ITEM_COLUMNS} FROM items WHERE id = ? AND tenant_id = ?`,
+      [input.itemId, input.tenantId],
+    );
+    const item = nextRow ? mapItem(nextRow) : null;
+    if (!item) {
+      throw new InventoryValidationError('unknown-item');
+    }
+
+    await insertActivity(database, {
+      tenantId: input.tenantId,
+      actorId: input.actorId,
+      action: 'stock.adjust',
+      entity: 'items',
+      entityId: item.id,
+      detail: {
+        itemCode: item.itemCode,
+        previousStock: current.currentStock,
+        delta: input.nextStock - current.currentStock,
+        currentStock: item.currentStock,
+      },
+    });
+    updated = item;
+  });
+
+  if (!updated) {
+    throw new InventoryValidationError('unknown');
+  }
+  return updated;
+}
+
 export async function recordPurchase(
   tenantId: string,
   actorId: string,

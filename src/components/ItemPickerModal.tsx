@@ -79,7 +79,7 @@ export function ItemPickerModal({ visible, items, lines, onClose, onApply }: Ite
               accessibilityRole="button"
               accessibilityLabel={t('stock.purchase.cancel')}
               onPress={onClose}
-              className="h-11 w-11 items-center justify-center rounded-full"
+              className="h-11 w-11 items-center justify-center rounded-lg"
             >
               <Ionicons name="close" size={28} color={palette.ink} />
             </Pressable>
@@ -177,7 +177,7 @@ export function ItemPickerModal({ visible, items, lines, onClose, onApply }: Ite
                 });
                 onApply(next);
               }}
-              className="h-16 items-center justify-center rounded-full bg-accent disabled:opacity-50"
+              className="h-16 items-center justify-center rounded-lg bg-accent disabled:opacity-50"
             >
               <Text className="text-body font-bold text-accent-ink">
                 {t('stock.purchase.pickerDone', { count: selectedCount })}
@@ -204,7 +204,7 @@ function CategoryChip({
       accessibilityRole="button"
       accessibilityState={{ selected }}
       onPress={onPress}
-      className={`h-11 justify-center rounded-full border px-4 ${selected ? 'border-accent bg-accent' : 'border-line bg-surface'}`}
+      className={`h-11 justify-center rounded-lg border px-4 ${selected ? 'border-accent bg-accent' : 'border-line bg-surface'}`}
     >
       <Text className={`text-base font-semibold ${selected ? 'text-accent-ink' : 'text-ink'}`}>{label}</Text>
     </Pressable>
