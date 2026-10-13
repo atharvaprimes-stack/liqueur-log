@@ -52,9 +52,9 @@ export function StaffFormModal({
       <View style={themeStyle} className="flex-1 items-center justify-center bg-black/70 px-4">
         <View className="w-full max-w-md rounded-3xl border border-line bg-surface p-5">
           <Text className="text-title font-semibold text-ink">{title}</Text>
-          <Text className="mt-1 text-base text-muted">{t('staff.scope')}</Text>
+          <Text className="mt-1 text-sm text-muted">{t('staff.scope')}</Text>
 
-          <Text className="mb-2 mt-5 text-base text-ink">{t('staff.name')}</Text>
+          <Text className="mb-2 mt-5 text-sm text-ink">{t('staff.name')}</Text>
           <TextInput
             value={name}
             onChangeText={setName}
@@ -64,7 +64,7 @@ export function StaffFormModal({
             className="rounded-2xl border border-line bg-canvas px-4 py-3 text-body text-ink"
           />
 
-          <Text className="mb-2 mt-4 text-base text-ink">{t('staff.mobile')}</Text>
+          <Text className="mb-2 mt-4 text-sm text-ink">{t('staff.mobile')}</Text>
           <TextInput
             value={mobileNumber}
             onChangeText={(value) => setMobileNumber(value.replace(/\D/g, '').slice(0, 10))}
@@ -75,7 +75,7 @@ export function StaffFormModal({
             className="rounded-2xl border border-line bg-canvas px-4 py-3 text-body text-ink"
           />
 
-          <Text className="mb-2 mt-4 text-base text-ink">{requireMpin ? t('staff.mpin') : t('staff.newMpin')}</Text>
+          <Text className="mb-2 mt-4 text-sm text-ink">{requireMpin ? t('staff.mpin') : t('staff.newMpin')}</Text>
           <TextInput
             value={mpin}
             onChangeText={(value) => setMpin(value.replace(/\D/g, '').slice(0, 4))}
@@ -87,7 +87,7 @@ export function StaffFormModal({
             className="rounded-2xl border border-line bg-canvas px-4 py-3 text-body text-ink"
           />
 
-          {error ? <Text className="mt-4 text-base text-danger">{error}</Text> : null}
+          {error ? <Text className="mt-4 text-sm text-danger">{error}</Text> : null}
 
           <View className="mt-6 flex-row gap-3">
             <Pressable

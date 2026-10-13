@@ -97,8 +97,8 @@ export default function ManageStaffScreen() {
               >
                 <Text className="text-body font-semibold text-accent-ink">{t('staff.add')}</Text>
               </Pressable>
-              {error ? <Text className="mt-4 text-base text-danger">{error}</Text> : null}
-              {formError ? <Text className="mt-4 text-base text-danger">{formError}</Text> : null}
+              {error ? <Text className="mt-4 text-sm text-danger">{error}</Text> : null}
+              {formError ? <Text className="mt-4 text-sm text-danger">{formError}</Text> : null}
               {isLoading ? <ActivityIndicator className="mt-6" color={palette.accent} /> : null}
             </View>
           }
@@ -111,10 +111,10 @@ export default function ManageStaffScreen() {
               <View className="mb-3 rounded-3xl border border-line bg-surface p-4">
                 <View className="flex-row items-start justify-between gap-3">
                   <View className="flex-1">
-                    <Text className="text-xl font-semibold text-ink">{item.name}</Text>
-                    <Text className="mt-1 text-base text-muted">{formatMobile(item.mobileNumber)}</Text>
+                    <Text className="text-base font-semibold text-ink">{item.name}</Text>
+                    <Text className="mt-1 text-sm text-muted">{formatMobile(item.mobileNumber)}</Text>
                   </View>
-                  <Text className={item.isActive ? 'text-base font-semibold text-success' : 'text-base text-muted'}>
+                  <Text className={item.isActive ? 'text-sm font-semibold text-success' : 'text-sm text-muted'}>
                     {item.isActive ? t('staff.active') : t('staff.inactive')}
                   </Text>
                 </View>
@@ -208,7 +208,7 @@ export default function ManageStaffScreen() {
 }
 
 function SectionLabel({ label }: { label: string }) {
-  return <Text className="mb-3 mt-2 text-base font-semibold text-muted">{label}</Text>;
+  return <Text className="mb-3 mt-2 text-sm font-semibold text-muted">{label}</Text>;
 }
 
 function formatMobile(value: string): string {

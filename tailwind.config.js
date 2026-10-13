@@ -17,9 +17,9 @@ module.exports = {
         success: 'rgb(var(--color-success) / <alpha-value>)',
       },
       fontSize: {
-        body: ['18px', { lineHeight: '28px' }],
-        title: ['28px', { lineHeight: '36px' }],
-        display: ['34px', { lineHeight: '42px' }],
+        body: ['16px', { lineHeight: '22px' }],
+        title: ['18px', { lineHeight: '24px' }],
+        display: ['22px', { lineHeight: '28px' }],
       },
     },
   },

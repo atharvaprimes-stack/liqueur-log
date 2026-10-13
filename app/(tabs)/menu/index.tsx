@@ -44,7 +44,7 @@ export default function MenuScreen() {
                   {t(THEME_LABELS[option])}
                 </Text>
                 {option === 'amber' ? (
-                  <Text className={`mt-1 text-base ${selected ? 'text-accent-ink' : 'text-muted'}`}>
+                  <Text className={`mt-1 text-sm ${selected ? 'text-accent-ink' : 'text-muted'}`}>
                     {t('menu.amberHint')}
                   </Text>
                 ) : null}

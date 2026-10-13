@@ -33,7 +33,7 @@ export function ScreenWrapper({ children, showBackButton = false, padded = true 
             <Ionicons name="chevron-back" size={28} color={palette.accent} />
           </Pressable>
         ) : null}
-        <Text className="min-w-0 flex-1 text-xl font-semibold text-ink" numberOfLines={1}>
+        <Text className="min-w-0 flex-1 text-lg font-semibold text-ink" numberOfLines={1}>
           {businessName}
         </Text>
         {currentUser ? (
