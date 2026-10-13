@@ -63,11 +63,14 @@ export default function MenuScreen() {
                 toggleLanguage();
               }
             }}
-            className={`h-14 flex-1 items-center justify-center rounded-3xl border ${
+            className={`min-h-14 flex-1 items-center justify-center rounded-3xl border px-3 py-3 ${
               language === 'en' ? 'border-accent bg-accent' : 'border-line bg-surface'
             }`}
           >
-            <Text className={`text-body font-semibold ${language === 'en' ? 'text-accent-ink' : 'text-ink'}`}>
+            <Text
+              className={`text-center text-base font-semibold ${language === 'en' ? 'text-accent-ink' : 'text-ink'}`}
+              style={{ lineHeight: 24 }}
+            >
               {t('menu.english')}
             </Text>
           </Pressable>
@@ -79,11 +82,14 @@ export default function MenuScreen() {
                 toggleLanguage();
               }
             }}
-            className={`h-14 flex-1 items-center justify-center rounded-3xl border ${
+            className={`min-h-14 flex-1 items-center justify-center rounded-3xl border px-3 py-3 ${
               language === 'mr' ? 'border-accent bg-accent' : 'border-line bg-surface'
             }`}
           >
-            <Text className={`text-body font-semibold ${language === 'mr' ? 'text-accent-ink' : 'text-ink'}`}>
+            <Text
+              className={`text-center text-base font-semibold ${language === 'mr' ? 'text-accent-ink' : 'text-ink'}`}
+              style={{ lineHeight: 24 }}
+            >
               {t('menu.marathi')}
             </Text>
           </Pressable>

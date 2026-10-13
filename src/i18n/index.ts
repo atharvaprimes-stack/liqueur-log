@@ -18,9 +18,7 @@ const resources = {
       },
       common: {
         back: 'Go back',
-        language: 'Switch language',
         signOut: 'Sign out',
-        deleteDigit: 'Delete digit',
       },
       auth: {
         invalid: 'Invalid mobile number or MPIN.',
@@ -31,9 +29,12 @@ const resources = {
       },
       login: {
         title: 'Sign in',
-        mobilePrompt: 'Enter the 10-digit mobile number issued for this business.',
-        mpinPrompt: 'MPIN for {{mobile}}',
-        changeMobile: 'Change mobile number',
+        subtitle: 'Use the mobile number and MPIN for this business.',
+        mobileLabel: 'Mobile number',
+        mobilePlaceholder: '10-digit mobile number',
+        mpinLabel: 'MPIN',
+        mpinPlaceholder: '4-digit MPIN',
+        submit: 'Sign in',
       },
       home: {
         title: 'Home',
@@ -120,9 +121,7 @@ const resources = {
       },
       common: {
         back: 'मागे जा',
-        language: 'भाषा बदला',
         signOut: 'बाहेर पडा',
-        deleteDigit: 'अंक काढा',
       },
       auth: {
         invalid: 'मोबाइल नंबर किंवा एमपिन चुकीचा आहे.',
@@ -133,9 +132,12 @@ const resources = {
       },
       login: {
         title: 'प्रवेश',
-        mobilePrompt: 'या व्यवसायासाठी दिलेला 10 अंकी मोबाइल नंबर टाका.',
-        mpinPrompt: '{{mobile}} साठी एमपिन',
-        changeMobile: 'मोबाइल नंबर बदला',
+        subtitle: 'या व्यवसायासाठी मोबाइल नंबर आणि एमपिन वापरा.',
+        mobileLabel: 'मोबाइल नंबर',
+        mobilePlaceholder: '१० अंकी मोबाइल नंबर',
+        mpinLabel: 'एमपिन',
+        mpinPlaceholder: '४ अंकी एमपिन',
+        submit: 'प्रवेश',
       },
       home: {
         title: 'होम',

@@ -2,6 +2,8 @@ import { Redirect, Tabs } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { useTranslation } from 'react-i18next';
+import { Dimensions, Platform, StatusBar } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { useAuth } from '../../src/context/AuthContext';
@@ -11,7 +13,10 @@ export default function TabsLayout() {
   const { t } = useTranslation();
   const { currentUser, isReady } = useAuth();
   const { palette } = useTheme();
+  const insets = useSafeAreaInsets();
   const isAdmin = currentUser?.role === 'ADMIN';
+  const tabBarPaddingBottom = bottomNavigationInset(insets.bottom);
+  const tabBarHeight = 64 + tabBarPaddingBottom;
 
   if (!isReady) {
     return <LoadingScreen />;
@@ -31,14 +36,13 @@ export default function TabsLayout() {
           backgroundColor: palette.tabBar,
           borderTopColor: palette.line,
           borderTopWidth: palette.tabBorderWidth,
-          paddingTop: 6,
+          height: tabBarHeight,
+          paddingTop: 4,
+          paddingBottom: tabBarPaddingBottom,
         },
         tabBarLabelStyle: {
           fontSize: 13,
           fontWeight: '700',
-        },
-        tabBarIconStyle: {
-          marginTop: 2,
         },
       }}
     >
@@ -80,4 +84,18 @@ export default function TabsLayout() {
       />
     </Tabs>
   );
+}
+
+function bottomNavigationInset(reportedBottom: number): number {
+  if (reportedBottom > 0 || Platform.OS !== 'android') {
+    return reportedBottom;
+  }
+
+  const screenHeight = Dimensions.get('screen').height;
+  const windowHeight = Dimensions.get('window').height;
+  const statusBarHeight = StatusBar.currentHeight ?? 0;
+  const measured = Math.round(screenHeight - windowHeight - statusBarHeight);
+  // Three-button navigation is about 48dp. A zero safe-area report still
+  // leaves those buttons drawn over the tab labels.
+  return measured > 0 ? measured : 48;
 }
