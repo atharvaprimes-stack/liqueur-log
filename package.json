@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.0.2",
     "@supabase/supabase-js": "^2.117.3",
     "bcryptjs": "^3.0.3",
     "expo": "~57.0.27",
@@ -21,9 +22,11 @@
     "expo-router": "~57.0.25",
     "expo-sqlite": "~57.0.4",
     "expo-status-bar": "~57.0.1",
+    "i18next": "^26.4.4",
     "nativewind": "^4.2.7",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-i18next": "^17.0.16",
     "react-native": "0.86.3",
     "react-native-reanimated": "4.5.1",
     "react-native-safe-area-context": "~5.7.0",

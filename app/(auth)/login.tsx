@@ -1,28 +1,40 @@
 import { useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { Redirect } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTranslation } from 'react-i18next';
 
-import { NumericKeypad } from '../../src/components/NumericKeypad';
+import { ScreenWrapper } from '../../src/components/ScreenWrapper';
 import { useAuth } from '../../src/context/AuthContext';
-
-type Step = 'mobile' | 'mpin';
+import { AuthError } from '../../src/domain/errors';
+import { useTheme } from '../../src/theme/theme-context';
 
 export default function LoginScreen() {
+  const { t } = useTranslation();
+  const { palette } = useTheme();
   const { currentUser, isReady, login } = useAuth();
-  const [step, setStep] = useState<Step>('mobile');
+  const pinRef = useRef<TextInput>(null);
   const [mobileNumber, setMobileNumber] = useState('');
   const [mpin, setMpin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
+  const canSubmit = mobileNumber.length === 10 && mpin.length === 4 && !submitting;
 
   if (isReady && currentUser) {
-    return <Redirect href={currentUser.role === 'ADMIN' ? '/dashboard/manage-staff' : '/dashboard'} />;
+    return <Redirect href="/home" />;
   }
 
-  const submit = async (pin: string) => {
-    if (submittingRef.current || mobileNumber.length !== 10 || pin.length !== 4) {
+  const submit = async () => {
+    if (submittingRef.current || mobileNumber.length !== 10 || mpin.length !== 4) {
       return;
     }
 
@@ -30,104 +42,105 @@ export default function LoginScreen() {
     setSubmitting(true);
     setError(null);
     try {
-      await login(mobileNumber, pin);
+      await login(mobileNumber, mpin);
     } catch (loginError) {
-      setError(loginError instanceof Error ? loginError.message : 'Unable to sign in.');
+      setError(loginError instanceof AuthError ? t(`auth.${loginError.reason}`) : t('auth.unavailable'));
       setMpin('');
+      pinRef.current?.focus();
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
     }
   };
 
-  const onDigit = (digit: string) => {
-    if (submitting) {
-      return;
-    }
-    setError(null);
-    if (step === 'mobile') {
-      if (mobileNumber.length >= 10) {
-        return;
-      }
-      const next = `${mobileNumber}${digit}`;
-      setMobileNumber(next);
-      if (next.length === 10) {
-        setStep('mpin');
-      }
-      return;
-    }
-
-    if (mpin.length >= 4) {
-      return;
-    }
-    const next = `${mpin}${digit}`;
-    setMpin(next);
-    if (next.length === 4) {
-      void submit(next);
-    }
-  };
-
-  const onDelete = () => {
-    if (submitting) {
-      return;
-    }
-    setError(null);
-    if (step === 'mpin') {
-      setMpin((current) => current.slice(0, -1));
-      return;
-    }
-    setMobileNumber((current) => current.slice(0, -1));
-  };
-
-  const display = step === 'mobile' ? formatMobile(mobileNumber) : '•'.repeat(mpin.length).padEnd(4, '–');
-
   return (
-    <SafeAreaView className="flex-1 bg-stone-950">
-      <View className="flex-1 justify-between px-6 pb-4 pt-10">
-        <View>
-          <Text className="text-xs font-semibold tracking-[3px] text-amber-400">LIQUEUR LOG</Text>
-          <Text className="mt-3 text-3xl font-semibold text-stone-50">Sign in</Text>
-          <Text className="mt-2 text-base text-stone-400">
-            {step === 'mobile'
-              ? 'Enter the 10-digit mobile number issued for this business.'
-              : `MPIN for ${formatMobile(mobileNumber)}`}
-          </Text>
-        </View>
+    <ScreenWrapper padded={false}>
+      <KeyboardAvoidingView
+        className="flex-1"
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView
+          className="flex-1"
+          contentContainerClassName="grow justify-center px-6 py-8"
+          keyboardShouldPersistTaps="handled"
+        >
+          <View className="w-full max-w-[440px] self-center">
+            <Text className="text-[32px] font-medium text-ink" style={{ lineHeight: 40 }}>
+              {t('login.title')}
+            </Text>
+            <Text className="mt-2 text-base text-muted" style={{ lineHeight: 24 }}>
+              {t('login.subtitle')}
+            </Text>
 
-        <View className="items-center">
-          <Text className="text-center text-3xl font-medium tracking-[6px] text-stone-50">{display}</Text>
-          <Text className="mt-3 text-sm text-stone-500">
-            {step === 'mobile' ? `${mobileNumber.length} / 10` : `${mpin.length} / 4`}
-          </Text>
-          {error ? <Text className="mt-4 text-center text-sm text-red-400">{error}</Text> : null}
-          {submitting ? <ActivityIndicator className="mt-4" color="#f59e0b" /> : null}
-        </View>
+            <Text className="mb-2 mt-8 text-sm font-medium text-muted">{t('login.mobileLabel')}</Text>
+            <TextInput
+              value={mobileNumber}
+              onChangeText={(value) => {
+                setError(null);
+                setMobileNumber(value.replace(/\D/g, '').slice(0, 10));
+              }}
+              placeholder={t('login.mobilePlaceholder')}
+              placeholderTextColor={palette.muted}
+              keyboardType="phone-pad"
+              inputMode="tel"
+              autoComplete="tel"
+              textContentType="telephoneNumber"
+              maxLength={10}
+              editable={!submitting}
+              returnKeyType="next"
+              blurOnSubmit={false}
+              onSubmitEditing={() => pinRef.current?.focus()}
+              className={`min-h-14 rounded-xl border bg-canvas px-4 text-lg text-ink ${
+                error ? 'border-danger' : 'border-line'
+              }`}
+            />
 
-        <View>
-          {step === 'mpin' ? (
+            <Text className="mb-2 mt-5 text-sm font-medium text-muted">{t('login.mpinLabel')}</Text>
+            <TextInput
+              ref={pinRef}
+              value={mpin}
+              onChangeText={(value) => {
+                setError(null);
+                setMpin(value.replace(/\D/g, '').slice(0, 4));
+              }}
+              placeholder={t('login.mpinPlaceholder')}
+              placeholderTextColor={palette.muted}
+              keyboardType="number-pad"
+              inputMode="numeric"
+              autoComplete="password"
+              textContentType="password"
+              secureTextEntry
+              maxLength={4}
+              editable={!submitting}
+              onSubmitEditing={() => {
+                void submit();
+              }}
+              className={`min-h-14 rounded-xl border bg-canvas px-4 text-lg text-ink ${
+                error ? 'border-danger' : 'border-line'
+              }`}
+            />
+
+            <Text className="mt-3 min-h-5 text-sm text-danger" style={{ lineHeight: 20 }}>
+              {error ?? ''}
+            </Text>
+
             <Pressable
               accessibilityRole="button"
-              disabled={submitting}
+              disabled={!canSubmit}
               onPress={() => {
-                setStep('mobile');
-                setMpin('');
-                setError(null);
+                void submit();
               }}
-              className="mb-4 items-center py-2"
+              className="mt-4 h-14 items-center justify-center rounded-xl bg-accent disabled:opacity-40"
             >
-              <Text className="text-sm font-medium text-amber-400">Change mobile number</Text>
+              {submitting ? (
+                <ActivityIndicator color={palette.accentInk} />
+              ) : (
+                <Text className="text-base font-semibold text-accent-ink">{t('login.submit')}</Text>
+              )}
             </Pressable>
-          ) : null}
-          <NumericKeypad disabled={submitting} onDigit={onDigit} onDelete={onDelete} />
-        </View>
-      </View>
-    </SafeAreaView>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </ScreenWrapper>
   );
-}
-
-function formatMobile(value: string): string {
-  if (!value) {
-    return '––––––––––';
-  }
-  return value.padEnd(10, '–');
 }

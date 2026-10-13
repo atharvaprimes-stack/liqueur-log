@@ -50,4 +50,9 @@ CREATE TABLE IF NOT EXISTS sync_queue (
 
 CREATE INDEX IF NOT EXISTS sync_queue_created_at_idx
   ON sync_queue (created_at);
+
+CREATE TABLE IF NOT EXISTS preferences (
+  key TEXT PRIMARY KEY NOT NULL,
+  value TEXT NOT NULL
+);
 `;
