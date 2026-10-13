@@ -156,7 +156,7 @@ export function SessionTimeoutProvider({ children }: { children: ReactNode }) {
 
   return (
     <View
-      className="flex-1 bg-stone-950"
+      className="flex-1"
       style={{ flex: 1 }}
       onTouchStart={markInteraction}
       onStartShouldSetResponderCapture={() => {

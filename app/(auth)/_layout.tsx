@@ -1,21 +1,17 @@
 import { Redirect, Stack } from 'expo-router';
-import { ActivityIndicator, View } from 'react-native';
 
+import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { useAuth } from '../../src/context/AuthContext';
 
 export default function AuthLayout() {
   const { currentUser, isReady } = useAuth();
 
   if (!isReady) {
-    return (
-      <View className="flex-1 items-center justify-center bg-stone-950">
-        <ActivityIndicator color="#f59e0b" />
-      </View>
-    );
+    return <LoadingScreen />;
   }
 
   if (currentUser) {
-    return <Redirect href={currentUser.role === 'ADMIN' ? '/dashboard/manage-staff' : '/dashboard'} />;
+    return <Redirect href="/home" />;
   }
 
   return <Stack screenOptions={{ headerShown: false }} />;

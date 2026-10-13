@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, Text, TextInput, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
+
+import { useTheme } from '../theme/theme-context';
 
 type StaffFormValues = {
   name: string;
@@ -30,6 +33,8 @@ export function StaffFormModal({
   onClose,
   onSubmit,
 }: StaffFormModalProps) {
+  const { t } = useTranslation();
+  const { palette, themeStyle } = useTheme();
   const [name, setName] = useState(initialValues.name);
   const [mobileNumber, setMobileNumber] = useState(initialValues.mobileNumber);
   const [mpin, setMpin] = useState(initialValues.mpin);
@@ -44,67 +49,65 @@ export function StaffFormModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View className="flex-1 items-center justify-center bg-black/70 px-5">
-        <View className="w-full max-w-md rounded-3xl bg-stone-900 p-5">
-          <Text className="text-xl font-semibold text-stone-50">{title}</Text>
-          <Text className="mt-1 text-sm text-stone-400">Staff can sign in only for this business.</Text>
+      <View style={themeStyle} className="flex-1 items-center justify-center bg-black/70 px-4">
+        <View className="w-full max-w-md rounded-3xl border border-line bg-surface p-5">
+          <Text className="text-title font-semibold text-ink">{title}</Text>
+          <Text className="mt-1 text-base text-muted">{t('staff.scope')}</Text>
 
-          <Text className="mb-2 mt-5 text-sm text-stone-300">Name</Text>
+          <Text className="mb-2 mt-5 text-base text-ink">{t('staff.name')}</Text>
           <TextInput
             value={name}
             onChangeText={setName}
-            placeholder="Staff name"
-            placeholderTextColor="#78716c"
+            placeholder={t('staff.namePlaceholder')}
+            placeholderTextColor={palette.muted}
             autoCapitalize="words"
-            className="rounded-2xl border border-stone-700 bg-stone-950 px-4 py-3 text-base text-stone-50"
+            className="rounded-2xl border border-line bg-canvas px-4 py-3 text-body text-ink"
           />
 
-          <Text className="mb-2 mt-4 text-sm text-stone-300">Mobile number</Text>
+          <Text className="mb-2 mt-4 text-base text-ink">{t('staff.mobile')}</Text>
           <TextInput
             value={mobileNumber}
             onChangeText={(value) => setMobileNumber(value.replace(/\D/g, '').slice(0, 10))}
-            placeholder="10 digits"
-            placeholderTextColor="#78716c"
+            placeholder={t('staff.mobilePlaceholder')}
+            placeholderTextColor={palette.muted}
             keyboardType="number-pad"
             maxLength={10}
-            className="rounded-2xl border border-stone-700 bg-stone-950 px-4 py-3 text-base text-stone-50"
+            className="rounded-2xl border border-line bg-canvas px-4 py-3 text-body text-ink"
           />
 
-          <Text className="mb-2 mt-4 text-sm text-stone-300">
-            {requireMpin ? 'Initial MPIN' : 'New MPIN'}
-          </Text>
+          <Text className="mb-2 mt-4 text-base text-ink">{requireMpin ? t('staff.mpin') : t('staff.newMpin')}</Text>
           <TextInput
             value={mpin}
             onChangeText={(value) => setMpin(value.replace(/\D/g, '').slice(0, 4))}
-            placeholder={requireMpin ? '4 digits' : 'Leave blank to keep the current MPIN'}
-            placeholderTextColor="#78716c"
+            placeholder={requireMpin ? t('staff.mpinPlaceholder') : t('staff.keepMpin')}
+            placeholderTextColor={palette.muted}
             keyboardType="number-pad"
             maxLength={4}
             secureTextEntry
-            className="rounded-2xl border border-stone-700 bg-stone-950 px-4 py-3 text-base text-stone-50"
+            className="rounded-2xl border border-line bg-canvas px-4 py-3 text-body text-ink"
           />
 
-          {error ? <Text className="mt-4 text-sm text-red-400">{error}</Text> : null}
+          {error ? <Text className="mt-4 text-base text-danger">{error}</Text> : null}
 
           <View className="mt-6 flex-row gap-3">
             <Pressable
               accessibilityRole="button"
               disabled={saving}
               onPress={onClose}
-              className="h-12 flex-1 items-center justify-center rounded-2xl bg-stone-800"
+              className="h-14 flex-1 items-center justify-center rounded-2xl border border-line bg-canvas"
             >
-              <Text className="font-medium text-stone-200">Cancel</Text>
+              <Text className="text-base font-semibold text-ink">{t('staff.cancel')}</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
               disabled={saving}
               onPress={() => onSubmit({ name, mobileNumber, mpin })}
-              className="h-12 flex-1 items-center justify-center rounded-2xl bg-amber-500 disabled:opacity-60"
+              className="h-14 flex-1 items-center justify-center rounded-2xl bg-accent disabled:opacity-60"
             >
               {saving ? (
-                <ActivityIndicator color="#1c1917" />
+                <ActivityIndicator color={palette.accentInk} />
               ) : (
-                <Text className="font-semibold text-stone-950">{submitLabel}</Text>
+                <Text className="text-base font-semibold text-accent-ink">{submitLabel}</Text>
               )}
             </Pressable>
           </View>

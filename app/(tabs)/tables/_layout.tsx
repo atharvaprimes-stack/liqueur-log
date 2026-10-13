@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
 
-export default function DashboardLayout() {
+export default function TablesLayout() {
   return <Stack screenOptions={{ headerShown: false }} />;
 }
