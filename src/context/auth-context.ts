@@ -8,6 +8,9 @@ export type AuthContextValue = {
   isReady: boolean;
   login: (mobileNumber: string, mpin: string) => Promise<void>;
   logout: () => Promise<void>;
+  updateAccount: (input: { name: string; currentMpin: string; newMpin: string }) => Promise<void>;
+  updateTenant: (input: { businessName: string; address: string; currentMpin: string }) => Promise<void>;
+  updateTableCount: (input: { tableCount: number; currentMpin: string }) => Promise<void>;
 };
 
 export const AuthContext = createContext<AuthContextValue | null>(null);

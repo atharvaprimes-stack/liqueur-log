@@ -93,12 +93,12 @@ export default function ManageStaffScreen() {
                   setFormError(null);
                   setEditor({ mode: 'create' });
                 }}
-                className="mt-5 h-14 items-center justify-center rounded-3xl bg-accent"
+                className="mt-5 h-14 items-center justify-center rounded-lg bg-accent"
               >
                 <Text className="text-body font-semibold text-accent-ink">{t('staff.add')}</Text>
               </Pressable>
-              {error ? <Text className="mt-4 text-base text-danger">{error}</Text> : null}
-              {formError ? <Text className="mt-4 text-base text-danger">{formError}</Text> : null}
+              {error ? <Text className="mt-4 text-sm text-danger">{error}</Text> : null}
+              {formError ? <Text className="mt-4 text-sm text-danger">{formError}</Text> : null}
               {isLoading ? <ActivityIndicator className="mt-6" color={palette.accent} /> : null}
             </View>
           }
@@ -111,10 +111,10 @@ export default function ManageStaffScreen() {
               <View className="mb-3 rounded-3xl border border-line bg-surface p-4">
                 <View className="flex-row items-start justify-between gap-3">
                   <View className="flex-1">
-                    <Text className="text-xl font-semibold text-ink">{item.name}</Text>
-                    <Text className="mt-1 text-base text-muted">{formatMobile(item.mobileNumber)}</Text>
+                    <Text className="text-base font-semibold text-ink">{item.name}</Text>
+                    <Text className="mt-1 text-sm text-muted">{formatMobile(item.mobileNumber)}</Text>
                   </View>
-                  <Text className={item.isActive ? 'text-base font-semibold text-success' : 'text-base text-muted'}>
+                  <Text className={item.isActive ? 'text-sm font-semibold text-success' : 'text-sm text-muted'}>
                     {item.isActive ? t('staff.active') : t('staff.inactive')}
                   </Text>
                 </View>
@@ -125,14 +125,14 @@ export default function ManageStaffScreen() {
                       setFormError(null);
                       setEditor({ mode: 'edit', staff: item });
                     }}
-                    className="h-12 flex-1 items-center justify-center rounded-2xl border border-line bg-canvas"
+                    className="h-12 flex-1 items-center justify-center rounded-lg border border-line bg-canvas"
                   >
                     <Text className="text-base font-semibold text-ink">{t('staff.edit')}</Text>
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
                     onPress={() => changeAccess(item, !item.isActive)}
-                    className="h-12 flex-1 items-center justify-center rounded-2xl border border-line bg-canvas"
+                    className="h-12 flex-1 items-center justify-center rounded-lg border border-line bg-canvas"
                   >
                     <Text className="text-base font-semibold text-ink">
                       {item.isActive ? t('staff.deactivate') : t('staff.activate')}
@@ -181,7 +181,7 @@ export default function ManageStaffScreen() {
                 <Pressable
                   accessibilityRole="button"
                   onPress={() => setPendingDeactivate(null)}
-                  className="h-14 flex-1 items-center justify-center rounded-2xl border border-line bg-canvas"
+                  className="h-14 flex-1 items-center justify-center rounded-lg border border-line bg-canvas"
                 >
                   <Text className="text-base font-semibold text-ink">{t('staff.cancel')}</Text>
                 </Pressable>
@@ -194,7 +194,7 @@ export default function ManageStaffScreen() {
                       setFormError(changeError instanceof Error ? changeError.message : t('staff.updateError'));
                     });
                   }}
-                  className="h-14 flex-1 items-center justify-center rounded-2xl bg-danger"
+                  className="h-14 flex-1 items-center justify-center rounded-lg bg-danger"
                 >
                   <Text className="text-base font-semibold text-accent-ink">{t('staff.deactivate')}</Text>
                 </Pressable>
@@ -208,7 +208,7 @@ export default function ManageStaffScreen() {
 }
 
 function SectionLabel({ label }: { label: string }) {
-  return <Text className="mb-3 mt-2 text-base font-semibold text-muted">{label}</Text>;
+  return <Text className="mb-3 mt-2 text-sm font-semibold text-muted">{label}</Text>;
 }
 
 function formatMobile(value: string): string {

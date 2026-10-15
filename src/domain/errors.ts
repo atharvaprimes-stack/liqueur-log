@@ -24,9 +24,86 @@ export class StaffAccessError extends Error {
   }
 }
 
+export class ProfileError extends Error {
+  readonly code:
+    | 'name'
+    | 'business'
+    | 'address'
+    | 'tables'
+    | 'mpin'
+    | 'mismatch'
+    | 'offline'
+    | 'forbidden'
+    | 'locked'
+    | 'unknown';
+
+  constructor(code: ProfileError['code']) {
+    super(code);
+    this.name = 'ProfileError';
+    this.code = code;
+  }
+}
+
 export class StaffValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'StaffValidationError';
   }
+}
+
+export const INVENTORY_ERROR_CODES = [
+  'supplier',
+  'invoice',
+  'payment',
+  'lines',
+  'quantity',
+  'price',
+  'duplicate-invoice',
+  'unknown-item',
+  'stock',
+  'forbidden',
+  'unknown',
+  'item-code',
+  'name',
+  'brand',
+  'type',
+  'volume',
+  'threshold',
+  'duplicate-code',
+  'has-stock',
+  'in-use',
+  'vendor',
+  'phone',
+  'duplicate-vendor',
+  'label',
+  'duplicate-label',
+  'label-in-use',
+] as const;
+
+export type InventoryErrorCode = (typeof INVENTORY_ERROR_CODES)[number];
+
+export class InventoryAccessError extends Error {
+  readonly code = 'forbidden' as const;
+
+  constructor() {
+    super('Only an admin can change stock.');
+    this.name = 'InventoryAccessError';
+  }
+}
+
+export class InventoryValidationError extends Error {
+  readonly code: InventoryErrorCode;
+
+  constructor(code: InventoryErrorCode) {
+    super(code);
+    this.name = 'InventoryValidationError';
+    this.code = code;
+  }
+}
+
+export function inventoryErrorCode(error: unknown): InventoryErrorCode {
+  if (error instanceof InventoryValidationError || error instanceof InventoryAccessError) {
+    return error.code;
+  }
+  return 'unknown';
 }

@@ -79,7 +79,7 @@ export default function TabsLayout() {
         name="menu"
         options={{
           title: t('tabs.menu'),
-          tabBarIcon: ({ color, size }) => <Ionicons name="menu" color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => <Ionicons name="settings" color={color} size={size} />,
         }}
       />
     </Tabs>

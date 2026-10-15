@@ -7,6 +7,7 @@ import {
   ScrollView,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { Redirect } from 'expo-router';
@@ -19,6 +20,7 @@ import { useTheme } from '../../src/theme/theme-context';
 
 export default function LoginScreen() {
   const { t } = useTranslation();
+  const { height } = useWindowDimensions();
   const { palette } = useTheme();
   const { currentUser, isReady, login } = useAuth();
   const pinRef = useRef<TextInput>(null);
@@ -61,16 +63,12 @@ export default function LoginScreen() {
       >
         <ScrollView
           className="flex-1"
-          contentContainerClassName="grow justify-center px-6 py-8"
+          contentContainerClassName="grow px-6 pb-8"
+          contentContainerStyle={{ paddingTop: height * 0.2 }}
           keyboardShouldPersistTaps="handled"
         >
           <View className="w-full max-w-[440px] self-center">
-            <Text className="text-[32px] font-medium text-ink" style={{ lineHeight: 40 }}>
-              {t('login.title')}
-            </Text>
-            <Text className="mt-2 text-base text-muted" style={{ lineHeight: 24 }}>
-              {t('login.subtitle')}
-            </Text>
+            <Text className="text-center text-display font-medium text-ink">{t('login.title')}</Text>
 
             <Text className="mb-2 mt-8 text-sm font-medium text-muted">{t('login.mobileLabel')}</Text>
             <TextInput
@@ -90,7 +88,7 @@ export default function LoginScreen() {
               returnKeyType="next"
               blurOnSubmit={false}
               onSubmitEditing={() => pinRef.current?.focus()}
-              className={`min-h-14 rounded-xl border bg-canvas px-4 text-lg text-ink ${
+              className={`min-h-14 rounded-xl border bg-canvas px-4 text-base text-ink ${
                 error ? 'border-danger' : 'border-line'
               }`}
             />
@@ -115,7 +113,7 @@ export default function LoginScreen() {
               onSubmitEditing={() => {
                 void submit();
               }}
-              className={`min-h-14 rounded-xl border bg-canvas px-4 text-lg text-ink ${
+              className={`min-h-14 rounded-xl border bg-canvas px-4 text-base text-ink ${
                 error ? 'border-danger' : 'border-line'
               }`}
             />
@@ -130,7 +128,7 @@ export default function LoginScreen() {
               onPress={() => {
                 void submit();
               }}
-              className="mt-4 h-14 items-center justify-center rounded-xl bg-accent disabled:opacity-40"
+              className="mt-4 h-14 items-center justify-center rounded-lg bg-accent disabled:opacity-40"
             >
               {submitting ? (
                 <ActivityIndicator color={palette.accentInk} />

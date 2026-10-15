@@ -2,7 +2,15 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { AppState, View } from 'react-native';
 import { router } from 'expo-router';
 
-import { authenticate, clearSession, recordInteraction, restoreSession } from '../data/repositories/authRepository';
+import {
+  authenticate,
+  clearSession,
+  recordInteraction,
+  restoreSession,
+  updateOwnAccount,
+  updateOwnTenant,
+  updateTableCount as saveTableCount,
+} from '../data/repositories/authRepository';
 import { flushSyncQueue } from '../data/remote/syncStaff';
 import type { Tenant, User } from '../domain/models/auth';
 import { getSessionInteractionAt, setSessionInteractionAt } from '../security/sessionCredentials';
@@ -62,8 +70,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCurrentTenant(null);
   }, []);
 
+  const updateAccount = useCallback(
+    async (input: { name: string; currentMpin: string; newMpin: string }) => {
+      if (!currentUser) {
+        return;
+      }
+      const user = await updateOwnAccount({ user: currentUser, ...input });
+      setCurrentUser(user);
+    },
+    [currentUser],
+  );
+
+  const updateTableCount = useCallback(
+    async (input: { tableCount: number; currentMpin: string }) => {
+      if (!currentUser || !currentTenant) {
+        return;
+      }
+      const tenant = await saveTableCount({ user: currentUser, tenant: currentTenant, ...input });
+      setCurrentTenant(tenant);
+    },
+    [currentTenant, currentUser],
+  );
+
+  const updateTenant = useCallback(
+    async (input: { businessName: string; address: string; currentMpin: string }) => {
+      if (!currentUser || !currentTenant) {
+        return;
+      }
+      const tenant = await updateOwnTenant({ user: currentUser, tenant: currentTenant, ...input });
+      setCurrentTenant(tenant);
+    },
+    [currentTenant, currentUser],
+  );
+
   return (
-    <AuthContext.Provider value={{ currentUser, currentTenant, isReady, login, logout }}>
+    <AuthContext.Provider
+      value={{ currentUser, currentTenant, isReady, login, logout, updateAccount, updateTenant, updateTableCount }}
+    >
       {children}
     </AuthContext.Provider>
   );
