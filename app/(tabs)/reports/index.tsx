@@ -15,8 +15,7 @@ export default function ReportsScreen() {
 
   return (
     <ScreenWrapper>
-      <Text className="text-display font-semibold text-ink">{t('reports.title')}</Text>
-      <View className="mt-6 rounded-3xl border border-line bg-surface p-5">
+      <View className="rounded-3xl border border-line bg-surface p-5">
         <Text className="text-body text-muted">{t('reports.body')}</Text>
       </View>
     </ScreenWrapper>

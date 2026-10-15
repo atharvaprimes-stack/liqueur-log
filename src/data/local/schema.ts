@@ -14,6 +14,10 @@ CREATE TABLE IF NOT EXISTS tenants (
   id TEXT PRIMARY KEY NOT NULL,
   business_name TEXT NOT NULL,
   license_number TEXT NOT NULL,
+  address TEXT NOT NULL DEFAULT '',
+  subscription_status TEXT NOT NULL DEFAULT 'active'
+    CHECK (subscription_status IN ('active', 'suspended', 'on-hold')),
+  table_count INTEGER NOT NULL DEFAULT 10 CHECK (table_count BETWEEN 1 AND 200),
   inactivity_timeout_minutes INTEGER NOT NULL DEFAULT 60
 );
 
@@ -67,8 +71,8 @@ CREATE TABLE IF NOT EXISTS items (
   name_en TEXT NOT NULL,
   name_mr TEXT NOT NULL,
   brand TEXT NOT NULL,
-  liquor_type TEXT NOT NULL CHECK (liquor_type IN ('IMFL', 'Beer', 'Wine', 'Foreign', 'Country', 'Snacks')),
-  sub_type TEXT NOT NULL CHECK (sub_type IN ('Strong', 'Mild')),
+  liquor_type TEXT NOT NULL,
+  sub_type TEXT NOT NULL,
   volume_ml INTEGER NOT NULL CHECK (volume_ml > 0),
   purchase_price REAL NOT NULL CHECK (purchase_price >= 0),
   selling_price REAL NOT NULL CHECK (selling_price >= 0),
@@ -79,6 +83,39 @@ CREATE TABLE IF NOT EXISTS items (
 
 CREATE UNIQUE INDEX IF NOT EXISTS items_tenant_item_code_idx
   ON items (tenant_id, item_code);
+
+CREATE TABLE IF NOT EXISTS item_types (
+  id TEXT PRIMARY KEY NOT NULL,
+  tenant_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS item_types_tenant_name_idx
+  ON item_types (tenant_id, name COLLATE NOCASE);
+
+CREATE TABLE IF NOT EXISTS item_strengths (
+  id TEXT PRIMARY KEY NOT NULL,
+  tenant_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS item_strengths_tenant_name_idx
+  ON item_strengths (tenant_id, name COLLATE NOCASE);
+
+CREATE TABLE IF NOT EXISTS vendors (
+  id TEXT PRIMARY KEY NOT NULL,
+  tenant_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  phone TEXT NOT NULL DEFAULT '',
+  FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS vendors_tenant_name_idx
+  ON vendors (tenant_id, name COLLATE NOCASE);
 
 CREATE TABLE IF NOT EXISTS purchases (
   id TEXT PRIMARY KEY NOT NULL,

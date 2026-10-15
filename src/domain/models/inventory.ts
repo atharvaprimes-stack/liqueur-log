@@ -1,12 +1,19 @@
 import { InventoryValidationError } from '../errors';
 import { parseQuantity, parseRupeeToPaise } from '../money';
 
-export const LIQUOR_TYPES = ['IMFL', 'Beer', 'Wine', 'Foreign', 'Country', 'Snacks'] as const;
-export const SUB_TYPES = ['Strong', 'Mild'] as const;
+export const DEFAULT_ITEM_TYPES = ['IMFL', 'Beer', 'Wine', 'Foreign', 'Country', 'Snacks'] as const;
+export const DEFAULT_ITEM_STRENGTHS = ['Strong', 'Mild'] as const;
 export const PAYMENT_TYPES = ['Cash', 'UPI', 'Credit'] as const;
 
-export type LiquorType = (typeof LIQUOR_TYPES)[number];
-export type SubType = (typeof SUB_TYPES)[number];
+export type LiquorType = string;
+export type SubType = string;
+
+export type CatalogTerm = {
+  id: string;
+  tenantId: string;
+  name: string;
+  sortOrder: number;
+};
 export type PaymentType = (typeof PAYMENT_TYPES)[number];
 
 export type StockItem = {
@@ -23,6 +30,44 @@ export type StockItem = {
   sellingPrice: number;
   currentStock: number;
   lowStockThreshold: number;
+};
+
+export type CatalogItemInput = {
+  itemCode: string;
+  nameEn: string;
+  nameMr: string;
+  brand: string;
+  liquorType: string;
+  subType: string;
+  volumeMl: string;
+  purchasePrice: string;
+  sellingPrice: string;
+  lowStockThreshold: string;
+};
+
+export type CatalogItemDraft = {
+  itemCode: string;
+  nameEn: string;
+  nameMr: string;
+  brand: string;
+  liquorType: LiquorType;
+  subType: SubType;
+  volumeMl: number;
+  purchasePrice: number;
+  sellingPrice: number;
+  lowStockThreshold: number;
+};
+
+export type Vendor = {
+  id: string;
+  tenantId: string;
+  name: string;
+  phone: string;
+};
+
+export type VendorInput = {
+  name: string;
+  phone: string;
 };
 
 export type DraftLine = {
@@ -70,12 +115,10 @@ const VOLUME_KEYS: Record<number, string> = {
   750: 'stock.volume.quart',
 };
 
-export function isLiquorType(value: string): value is LiquorType {
-  return LIQUOR_TYPES.some((type) => type === value);
-}
-
-export function isSubType(value: string): value is SubType {
-  return SUB_TYPES.some((type) => type === value);
+export function knownTermLabel(kind: 'types' | 'subTypes', name: string, t: (key: string) => string): string {
+  const key = `stock.${kind}.${name}`;
+  const label = t(key);
+  return label === key ? name : label;
 }
 
 export function isPaymentType(value: string): value is PaymentType {
@@ -149,19 +192,12 @@ export function stockChangeNeedsConfirm(currentStock: number, nextStock: number)
 export function stockFacetCounts(items: StockItem[]): {
   all: number;
   low: number;
-  types: Record<LiquorType, number>;
+  types: Record<string, number>;
 } {
-  const types: Record<LiquorType, number> = {
-    IMFL: 0,
-    Beer: 0,
-    Wine: 0,
-    Foreign: 0,
-    Country: 0,
-    Snacks: 0,
-  };
+  const types: Record<string, number> = {};
   let low = 0;
   for (const item of items) {
-    types[item.liquorType] += 1;
+    types[item.liquorType] = (types[item.liquorType] ?? 0) + 1;
     if (isLowStock(item)) {
       low += 1;
     }
@@ -192,8 +228,14 @@ export function filterStock(items: StockItem[], query: string): StockItem[] {
   );
 }
 
-export function groupStock(items: StockItem[]): StockSection[] {
-  return LIQUOR_TYPES.flatMap((liquorType) => {
+export function groupStock(items: StockItem[], typeOrder: readonly string[] = DEFAULT_ITEM_TYPES): StockSection[] {
+  const names = [...typeOrder];
+  for (const item of items) {
+    if (!names.includes(item.liquorType)) {
+      names.push(item.liquorType);
+    }
+  }
+  return names.flatMap((liquorType) => {
     const data = items
       .filter((item) => item.liquorType === liquorType)
       .sort(
@@ -308,6 +350,80 @@ export function buildPurchaseRecord(input: PurchaseFormInput): PurchaseDraft {
     totalPaise,
     paidPaise: input.paymentType === 'Credit' ? 0 : totalPaise,
   };
+}
+
+export function parseCatalogItem(input: CatalogItemInput): CatalogItemDraft {
+  const itemCode = input.itemCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!/^[A-Z0-9]{2,12}$/.test(itemCode)) {
+    throw new InventoryValidationError('item-code');
+  }
+
+  const nameEn = cleanLabel(input.nameEn, 'name');
+  const nameMr = cleanLabel(input.nameMr, 'name');
+  const brand = cleanLabel(input.brand, 'brand');
+  const liquorType = cleanLabel(input.liquorType, 'type');
+  const subType = cleanLabel(input.subType, 'type');
+
+  const volumeText = input.volumeMl.trim();
+  const volumeMl = Number(volumeText);
+  if (!/^\d{1,5}$/.test(volumeText) || !Number.isInteger(volumeMl) || volumeMl < 1 || volumeMl > 20000) {
+    throw new InventoryValidationError('volume');
+  }
+
+  const purchasePaise = parseRupeeToPaise(input.purchasePrice);
+  const sellingPaise = parseRupeeToPaise(input.sellingPrice);
+  if (purchasePaise === null || sellingPaise === null) {
+    throw new InventoryValidationError('price');
+  }
+
+  const thresholdText = input.lowStockThreshold.trim();
+  const lowStockThreshold = Number(thresholdText);
+  if (!/^\d{1,4}$/.test(thresholdText) || !Number.isInteger(lowStockThreshold)) {
+    throw new InventoryValidationError('threshold');
+  }
+
+  return {
+    itemCode,
+    nameEn,
+    nameMr,
+    brand,
+    liquorType,
+    subType,
+    volumeMl,
+    purchasePrice: purchasePaise / 100,
+    sellingPrice: sellingPaise / 100,
+    lowStockThreshold,
+  };
+}
+
+export function parseCatalogTerm(name: string): string {
+  const clean = name.trim().replace(/\s+/g, ' ');
+  if (!clean || clean.length > 40) {
+    throw new InventoryValidationError('label');
+  }
+  return clean;
+}
+
+export function parseVendor(input: VendorInput): { name: string; phone: string } {
+  const name = input.name.trim().replace(/\s+/g, ' ');
+  if (!name || name.length > 80) {
+    throw new InventoryValidationError('vendor');
+  }
+
+  const phone = input.phone.replace(/\D/g, '');
+  if (phone.length > 0 && (phone.length < 8 || phone.length > 15)) {
+    throw new InventoryValidationError('phone');
+  }
+
+  return { name, phone };
+}
+
+function cleanLabel(value: string, code: 'name' | 'brand' | 'type'): string {
+  const clean = value.trim().replace(/\s+/g, ' ');
+  if (!clean || clean.length > 80) {
+    throw new InventoryValidationError(code);
+  }
+  return clean;
 }
 
 function normalizeWords(value: string, maxLength: number, code: 'supplier' | 'invoice'): string {

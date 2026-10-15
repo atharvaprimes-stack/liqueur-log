@@ -1,16 +1,17 @@
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
 import { useAuth } from '../../../src/context/AuthContext';
-import { THEME_IDS, type ThemeId } from '../../../src/theme/themes';
+import { palettes, THEME_IDS, type ThemeId } from '../../../src/theme/themes';
 import { useTheme } from '../../../src/theme/theme-context';
 
-const THEME_LABELS: Record<ThemeId, 'menu.light' | 'menu.dark' | 'menu.amber'> = {
+const THEME_LABELS: Record<ThemeId, 'menu.light' | 'menu.dark' | 'menu.amberCompact'> = {
   light: 'menu.light',
   dark: 'menu.dark',
-  amber: 'menu.amber',
+  amber: 'menu.amberCompact',
 };
 
 export default function MenuScreen() {
@@ -22,89 +23,120 @@ export default function MenuScreen() {
 
   return (
     <ScreenWrapper padded={false}>
-      <ScrollView className="flex-1" contentContainerClassName="p-4 pb-10">
-        <Text className="text-display font-semibold text-ink">{t('menu.title')}</Text>
-
-        <Text className="mt-8 text-title font-semibold text-ink">{t('menu.appearance')}</Text>
-        <Text className="mt-2 text-body text-muted">{t('menu.appearanceBody')}</Text>
-        <View className="mt-4 gap-3">
-          {THEME_IDS.map((option) => {
-            const selected = theme === option;
-            return (
-              <Pressable
-                key={option}
-                accessibilityRole="button"
-                accessibilityState={{ selected }}
-                onPress={() => setTheme(option)}
-                className={`min-h-[72px] justify-center rounded-lg border px-5 py-4 ${
-                  selected ? 'border-accent bg-accent' : 'border-line bg-surface'
-                }`}
-              >
-                <Text className={`text-body font-semibold ${selected ? 'text-accent-ink' : 'text-ink'}`}>
-                  {t(THEME_LABELS[option])}
-                </Text>
-                {option === 'amber' ? (
-                  <Text className={`mt-1 text-sm ${selected ? 'text-accent-ink' : 'text-muted'}`}>
-                    {t('menu.amberHint')}
-                  </Text>
-                ) : null}
-              </Pressable>
-            );
-          })}
+      <ScrollView className="flex-1" contentContainerClassName="gap-3 p-4 pb-10">
+        <View className="overflow-hidden rounded-lg border border-line bg-surface">
+          <View className="gap-2 px-4 py-3">
+            <Text className="text-sm font-semibold text-muted">{t('menu.appearance')}</Text>
+            <View className="flex-row gap-1 rounded-lg bg-canvas p-1">
+              {THEME_IDS.map((option) => {
+                const selected = theme === option;
+                return (
+                  <Pressable
+                    key={option}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => setTheme(option)}
+                    className={`h-10 min-w-0 flex-1 flex-row items-center justify-center gap-1.5 rounded-lg px-1 ${
+                      selected ? 'bg-accent' : ''
+                    }`}
+                  >
+                    <View
+                      className="h-2.5 w-2.5 rounded-full border border-line"
+                      style={{ backgroundColor: palettes[option].canvas }}
+                    />
+                    <Text
+                      numberOfLines={1}
+                      className={`shrink text-[13px] font-semibold ${selected ? 'text-accent-ink' : 'text-ink'}`}
+                    >
+                      {t(THEME_LABELS[option])}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+          <View className="mx-4 h-px bg-line" />
+          <View className="gap-2 px-4 py-3">
+            <Text className="text-sm font-semibold text-muted">{t('menu.language')}</Text>
+            <View className="flex-row gap-1 rounded-lg bg-canvas p-1">
+              <LanguageOption
+                label={t('menu.english')}
+                selected={language === 'en'}
+                onPress={() => {
+                  if (language !== 'en') {
+                    toggleLanguage();
+                  }
+                }}
+              />
+              <LanguageOption
+                label={t('menu.marathi')}
+                selected={language === 'mr'}
+                onPress={() => {
+                  if (language !== 'mr') {
+                    toggleLanguage();
+                  }
+                }}
+              />
+            </View>
+          </View>
         </View>
 
-        <Text className="mt-8 text-title font-semibold text-ink">{t('menu.language')}</Text>
-        <View className="mt-4 flex-row gap-3">
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ selected: language === 'en' }}
-            onPress={() => {
-              if (language !== 'en') {
-                toggleLanguage();
-              }
-            }}
-            className={`min-h-14 flex-1 items-center justify-center rounded-lg border px-3 py-3 ${
-              language === 'en' ? 'border-accent bg-accent' : 'border-line bg-surface'
-            }`}
-          >
-            <Text
-              className={`text-center text-base font-semibold ${language === 'en' ? 'text-accent-ink' : 'text-ink'}`}
-              style={{ lineHeight: 24 }}
-            >
-              {t('menu.english')}
-            </Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ selected: language === 'mr' }}
-            onPress={() => {
-              if (language !== 'mr') {
-                toggleLanguage();
-              }
-            }}
-            className={`min-h-14 flex-1 items-center justify-center rounded-lg border px-3 py-3 ${
-              language === 'mr' ? 'border-accent bg-accent' : 'border-line bg-surface'
-            }`}
-          >
-            <Text
-              className={`text-center text-base font-semibold ${language === 'mr' ? 'text-accent-ink' : 'text-ink'}`}
-              style={{ lineHeight: 24 }}
-            >
-              {t('menu.marathi')}
-            </Text>
-          </Pressable>
+        <View className="overflow-hidden rounded-lg border border-line bg-surface">
+          <SettingLink
+            icon="person-circle-outline"
+            title={t('menu.account')}
+            hint={t('menu.accountHint')}
+            isLast
+            onPress={() => router.push('/menu/account')}
+          />
         </View>
 
-        <Text className="mt-8 text-title font-semibold text-ink">{t('menu.staff')}</Text>
-        <Text className="mt-2 text-body text-muted">{t(isAdmin ? 'menu.staffBody' : 'menu.staffDenied')}</Text>
         {isAdmin ? (
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => router.push('/menu/manage-staff')}
-            className="mt-4 h-14 items-center justify-center rounded-lg bg-accent"
-          >
-            <Text className="text-body font-semibold text-accent-ink">{t('menu.manageStaff')}</Text>
-          </Pressable>
+          <View className="overflow-hidden rounded-lg border border-line bg-surface">
+            <SettingLink
+              icon="business-outline"
+              title={t('menu.business')}
+              hint={t('menu.businessHint')}
+              onPress={() => router.push('/menu/business')}
+            />
+            <SettingLink
+              icon="grid-outline"
+              title={t('menu.floor')}
+              hint={t('menu.floorHint')}
+              onPress={() => router.push('/menu/tables')}
+            />
+            <SettingLink
+              icon="pricetag-outline"
+              title={t('menu.itemTypes')}
+              hint={t('menu.itemTypesHint')}
+              onPress={() => router.push({ pathname: '/menu/terms', params: { kind: 'type' } })}
+            />
+            <SettingLink
+              icon="flash-outline"
+              title={t('menu.strengths')}
+              hint={t('menu.strengthsHint')}
+              onPress={() => router.push({ pathname: '/menu/terms', params: { kind: 'strength' } })}
+            />
+            <SettingLink
+              icon="cube-outline"
+              title={t('menu.items')}
+              hint={t('menu.itemsHint')}
+              onPress={() => router.push('/menu/items')}
+            />
+            <SettingLink
+              icon="storefront-outline"
+              title={t('menu.vendors')}
+              hint={t('menu.vendorsHint')}
+              onPress={() => router.push('/menu/vendors')}
+            />
+            <SettingLink
+              icon="people-outline"
+              title={t('menu.staff')}
+              hint={t('menu.staffHint')}
+              isLast
+              onPress={() => router.push('/menu/manage-staff')}
+            />
+          </View>
         ) : null}
 
         <Pressable
@@ -112,11 +144,74 @@ export default function MenuScreen() {
           onPress={() => {
             void logout().then(() => router.replace('/login'));
           }}
-          className="mt-8 h-14 items-center justify-center rounded-lg border border-line bg-surface"
+          className="h-12 items-center justify-center rounded-lg border border-line bg-surface"
         >
-          <Text className="text-body font-semibold text-ink">{t('common.signOut')}</Text>
+          <Text className="text-base font-semibold text-ink">{t('common.signOut')}</Text>
         </Pressable>
       </ScrollView>
     </ScreenWrapper>
+  );
+}
+
+function LanguageOption({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      onPress={onPress}
+      className={`h-10 min-w-0 flex-1 items-center justify-center rounded-lg px-2 ${selected ? 'bg-accent' : ''}`}
+    >
+      <Text
+        numberOfLines={1}
+        className={`text-[13px] font-semibold ${selected ? 'text-accent-ink' : 'text-ink'}`}
+        style={{ lineHeight: 20 }}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function SettingLink({
+  icon,
+  title,
+  hint,
+  onPress,
+  isLast = false,
+}: {
+  icon:
+    | 'person-circle-outline'
+    | 'business-outline'
+    | 'grid-outline'
+    | 'pricetag-outline'
+    | 'flash-outline'
+    | 'cube-outline'
+    | 'storefront-outline'
+    | 'people-outline';
+  title: string;
+  hint: string;
+  onPress: () => void;
+  isLast?: boolean;
+}) {
+  const { palette } = useTheme();
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${title}. ${hint}`}
+      onPress={onPress}
+      className={`min-h-16 flex-row items-center gap-3 px-4 py-3 ${isLast ? '' : 'border-b border-line'}`}
+    >
+      <View className="h-9 w-9 items-center justify-center rounded-lg bg-canvas">
+        <Ionicons name={icon} size={18} color={palette.accent} />
+      </View>
+      <View className="min-w-0 flex-1">
+        <Text className="text-base font-semibold text-ink">{title}</Text>
+        <Text className="mt-0.5 text-sm text-muted" numberOfLines={2}>
+          {hint}
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={palette.muted} />
+    </Pressable>
   );
 }

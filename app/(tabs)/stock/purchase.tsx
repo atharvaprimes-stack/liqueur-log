@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next';
 
 import { ItemPickerModal } from '../../../src/components/ItemPickerModal';
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
+import { SupplierPicker } from '../../../src/components/SupplierPicker';
 import { useAuth } from '../../../src/context/AuthContext';
 import { inventoryErrorCode } from '../../../src/domain/errors';
 import {
@@ -33,6 +34,7 @@ import {
   sanitizeQuantityInput,
   sanitizeRupeeInput,
 } from '../../../src/domain/money';
+import { useVendors } from '../../../src/hooks/useCatalog';
 import { useInventory } from '../../../src/hooks/useInventory';
 import { useTheme } from '../../../src/theme/theme-context';
 
@@ -41,9 +43,11 @@ export default function PurchaseScreen() {
   const { palette } = useTheme();
   const { currentUser, isReady } = useAuth();
   const { items, isLoading, errorCode, savePurchase } = useInventory();
+  const { vendors, isLoading: vendorsLoading } = useVendors();
   const { itemId } = useLocalSearchParams<{ itemId?: string | string[] }>();
   const seededItemId = useRef<string | null>(null);
-  const [supplierName, setSupplierName] = useState('');
+  const [vendorId, setVendorId] = useState<string | null>(null);
+  const [vendorPickerOpen, setVendorPickerOpen] = useState(false);
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [paymentType, setPaymentType] = useState<PaymentType | null>(null);
   const [lines, setLines] = useState<DraftLine[]>([]);
@@ -54,6 +58,17 @@ export default function PurchaseScreen() {
   const summary = useMemo(() => summarizeDraft(lines), [lines]);
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const requestedItemId = Array.isArray(itemId) ? itemId[0] : itemId;
+  const vendor = vendors.find((entry) => entry.id === vendorId) ?? null;
+
+  useEffect(() => {
+    if (vendorId && !vendors.some((entry) => entry.id === vendorId)) {
+      setVendorId(null);
+      return;
+    }
+    if (!vendorId && vendors.length === 1) {
+      setVendorId(vendors[0].id);
+    }
+  }, [vendorId, vendors]);
 
   useEffect(() => {
     if (!requestedItemId || seededItemId.current === requestedItemId) {
@@ -96,7 +111,7 @@ export default function PurchaseScreen() {
       return;
     }
 
-    const supplier = supplierName.trim();
+    const supplier = vendor?.name.trim() ?? '';
     const invoice = invoiceNumber.trim();
     if (!supplier) {
       setFormError('supplier');
@@ -119,7 +134,7 @@ export default function PurchaseScreen() {
     setFormError(null);
     try {
       await savePurchase({
-        supplierName,
+        supplierName: supplier,
         invoiceNumber,
         paymentType,
         lines,
@@ -141,14 +156,32 @@ export default function PurchaseScreen() {
           {errorCode ? <Text className="mt-4 text-sm text-danger">{t(`stock.errors.${errorCode}`)}</Text> : null}
 
           <FieldLabel step="1" label={t('stock.purchase.supplier')} />
-          <TextInput
-            value={supplierName}
-            onChangeText={setSupplierName}
-            placeholder={t('stock.purchase.supplierPlaceholder')}
-            placeholderTextColor={palette.muted}
-            autoCapitalize="words"
-            className="h-14 rounded-2xl border border-line bg-surface px-4 text-body text-ink"
-          />
+          {vendorsLoading ? (
+            <View className="h-14 items-center justify-center rounded-lg border border-line bg-surface">
+              <ActivityIndicator color={palette.accent} />
+            </View>
+          ) : vendors.length === 0 ? (
+            <View className="rounded-lg border border-line bg-surface px-4 py-3">
+              <Text className="text-sm text-muted">{t('stock.purchase.noVendors')}</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => router.push('/menu/vendors')}
+                className="mt-3 h-12 items-center justify-center rounded-lg bg-accent"
+              >
+                <Text className="text-base font-semibold text-accent-ink">{t('stock.purchase.addVendor')}</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setVendorPickerOpen(true)}
+              className="h-14 justify-center rounded-lg border border-line bg-surface px-4"
+            >
+              <Text className={`text-base ${vendor ? 'text-ink' : 'text-muted'}`}>
+                {vendor ? vendor.name : t('stock.purchase.supplierPlaceholder')}
+              </Text>
+            </Pressable>
+          )}
 
           <FieldLabel step="2" label={t('stock.purchase.invoice')} />
           <TextInput
@@ -256,24 +289,48 @@ export default function PurchaseScreen() {
               ) : null}
               {summary.issue ? <Text className="mt-3 text-sm text-danger">{t(`stock.errors.${summary.issue}`)}</Text> : null}
               {formError ? <Text className="mt-3 text-sm text-danger">{t(`stock.errors.${formError}`)}</Text> : null}
-              <Pressable
-                accessibilityRole="button"
-                disabled={saving}
-                onPress={() => {
-                  void onSave();
-                }}
-                className="mt-3 h-12 items-center justify-center rounded-lg bg-accent disabled:opacity-50"
-              >
-                {saving ? (
-                  <ActivityIndicator color={palette.accentInk} />
-                ) : (
-                  <Text className="text-base font-semibold text-accent-ink">{t('stock.purchase.save')}</Text>
-                )}
-              </Pressable>
+              <View className="mt-3 flex-row gap-3">
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={saving}
+                  onPress={() => router.back()}
+                  className="h-12 flex-1 items-center justify-center rounded-lg border border-line bg-canvas disabled:opacity-50"
+                >
+                  <Text className="text-base font-semibold text-ink">{t('stock.purchase.cancel')}</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={saving}
+                  onPress={() => {
+                    void onSave();
+                  }}
+                  className="h-12 flex-1 items-center justify-center rounded-lg bg-accent disabled:opacity-50"
+                >
+                  {saving ? (
+                    <ActivityIndicator color={palette.accentInk} />
+                  ) : (
+                    <Text className="text-base font-semibold text-accent-ink" numberOfLines={1}>
+                      {t('stock.purchase.save')}
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
             </View>
           )}
         </View>
       </KeyboardAvoidingView>
+
+      <SupplierPicker
+        visible={vendorPickerOpen}
+        vendors={vendors}
+        selectedId={vendorId}
+        onClose={() => setVendorPickerOpen(false)}
+        onSelect={(nextId) => {
+          setVendorId(nextId);
+          setVendorPickerOpen(false);
+          setFormError(null);
+        }}
+      />
 
       <ItemPickerModal
         visible={pickerOpen}

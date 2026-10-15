@@ -1,10 +1,13 @@
 import type { Tenant, User } from '../../domain/models/auth';
-import { isUserRole } from '../../domain/models/auth';
+import { isSubscriptionStatus, isUserRole } from '../../domain/models/auth';
 
 export type TenantRow = {
   id: string;
   business_name: string;
   license_number: string;
+  address: string;
+  subscription_status: string;
+  table_count: number;
   inactivity_timeout_minutes: number;
 };
 
@@ -21,6 +24,9 @@ export type UserRow = {
 export type LoginRow = UserRow & {
   business_name: string;
   license_number: string;
+  address: string | null;
+  subscription_status: string | null;
+  table_count: number | null;
   inactivity_timeout_minutes: number;
 };
 
@@ -29,8 +35,19 @@ export function mapTenant(row: TenantRow): Tenant {
     id: row.id,
     businessName: row.business_name,
     licenseNumber: row.license_number,
+    address: row.address ?? '',
+    subscriptionStatus: isSubscriptionStatus(row.subscription_status) ? row.subscription_status : 'active',
+    tableCount: normalizeTableCount(row.table_count),
     inactivityTimeoutMinutes: row.inactivity_timeout_minutes,
   };
+}
+
+export function normalizeTableCount(value: number | null | undefined): number {
+  const count = Number(value);
+  if (!Number.isInteger(count) || count < 1 || count > 200) {
+    return 10;
+  }
+  return count;
 }
 
 export function mapUser(row: UserRow): User | null {

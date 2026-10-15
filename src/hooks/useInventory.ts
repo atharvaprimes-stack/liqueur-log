@@ -2,12 +2,13 @@ import { useCallback, useRef, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 
 import { useAuth } from '../context/auth-context';
-import { correctItemStock, listStock, recordPurchase } from '../data/repositories/inventoryRepository';
+import { correctItemStock, listCatalogTerms, listStock, recordPurchase } from '../data/repositories/inventoryRepository';
 import { InventoryAccessError, InventoryValidationError, inventoryErrorCode, type InventoryErrorCode } from '../domain/errors';
 import { type PurchaseFormInput, type StockItem } from '../domain/models/inventory';
 
 export function useInventory(): {
   items: StockItem[];
+  itemTypes: string[];
   isLoading: boolean;
   errorCode: InventoryErrorCode | null;
   isAdmin: boolean;
@@ -20,6 +21,7 @@ export function useInventory(): {
   const actorId = currentUser?.id ?? null;
   const isAdmin = currentUser?.role === 'ADMIN';
   const [items, setItems] = useState<StockItem[]>([]);
+  const [itemTypes, setItemTypes] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorCode, setErrorCode] = useState<InventoryErrorCode | null>(null);
   const revision = useRef(0);
@@ -31,16 +33,18 @@ export function useInventory(): {
     useCallback(() => {
       if (!tenantId) {
         setItems([]);
+        setItemTypes([]);
         setIsLoading(false);
         return undefined;
       }
 
       const seen = revision.current;
       let active = true;
-      void listStock(tenantId)
-        .then((next) => {
+      void Promise.all([listStock(tenantId), listCatalogTerms(tenantId, 'type')])
+        .then(([next, types]) => {
           if (active && revision.current === seen) {
             setItems(next);
+            setItemTypes(types.map((term) => term.name));
             setErrorCode(null);
           }
         })
@@ -68,9 +72,10 @@ export function useInventory(): {
 
     const seen = revision.current;
     try {
-      const next = await listStock(tenantId);
+      const [next, types] = await Promise.all([listStock(tenantId), listCatalogTerms(tenantId, 'type')]);
       if (revision.current === seen) {
         setItems(next);
+        setItemTypes(types.map((term) => term.name));
         setErrorCode(null);
       }
     } catch {
@@ -136,6 +141,7 @@ export function useInventory(): {
 
   return {
     items,
+    itemTypes,
     isLoading,
     errorCode,
     isAdmin,

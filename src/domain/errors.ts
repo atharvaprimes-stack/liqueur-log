@@ -24,6 +24,26 @@ export class StaffAccessError extends Error {
   }
 }
 
+export class ProfileError extends Error {
+  readonly code:
+    | 'name'
+    | 'business'
+    | 'address'
+    | 'tables'
+    | 'mpin'
+    | 'mismatch'
+    | 'offline'
+    | 'forbidden'
+    | 'locked'
+    | 'unknown';
+
+  constructor(code: ProfileError['code']) {
+    super(code);
+    this.name = 'ProfileError';
+    this.code = code;
+  }
+}
+
 export class StaffValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -43,6 +63,21 @@ export const INVENTORY_ERROR_CODES = [
   'stock',
   'forbidden',
   'unknown',
+  'item-code',
+  'name',
+  'brand',
+  'type',
+  'volume',
+  'threshold',
+  'duplicate-code',
+  'has-stock',
+  'in-use',
+  'vendor',
+  'phone',
+  'duplicate-vendor',
+  'label',
+  'duplicate-label',
+  'label-in-use',
 ] as const;
 
 export type InventoryErrorCode = (typeof INVENTORY_ERROR_CODES)[number];

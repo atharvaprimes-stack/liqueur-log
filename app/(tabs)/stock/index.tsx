@@ -12,7 +12,7 @@ import {
   groupStock,
   isLowStock,
   itemNames,
-  LIQUOR_TYPES,
+  knownTermLabel,
   stockFacetCounts,
   type StockFacet,
   type StockItem,
@@ -24,18 +24,27 @@ export default function StockScreen() {
   const { t, i18n } = useTranslation();
   const { palette } = useTheme();
   const language = i18n.language;
-  const { items, isLoading, errorCode, isAdmin, reload } = useInventory();
+  const { items, itemTypes, isLoading, errorCode, isAdmin, reload } = useInventory();
   const [search, setSearch] = useState('');
   const [facet, setFacet] = useState<StockFacet>('all');
   const [refreshing, setRefreshing] = useState(false);
 
   const searched = useMemo(() => filterStock(items, search), [items, search]);
   const facets = useMemo(() => stockFacetCounts(searched), [searched]);
-  const sections = useMemo(() => groupStock(applyStockFacet(searched, facet)), [facet, searched]);
+  const sections = useMemo(
+    () => groupStock(applyStockFacet(searched, facet), itemTypes),
+    [facet, itemTypes, searched],
+  );
   const chips = useMemo(() => {
-    const types = LIQUOR_TYPES.filter((type) => facets.types[type] > 0 || facet === type);
-    return ['all', ...types, 'low'] as StockFacet[];
-  }, [facet, facets.types]);
+    const ordered = [...itemTypes];
+    for (const type of Object.keys(facets.types)) {
+      if (!ordered.includes(type)) {
+        ordered.push(type);
+      }
+    }
+    const types = ordered.filter((type) => (facets.types[type] ?? 0) > 0 || facet === type);
+    return ['all', ...types, 'low'];
+  }, [facet, facets.types, itemTypes]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -143,7 +152,7 @@ export default function StockScreen() {
             renderSectionHeader={({ section }) =>
               sections.length < 2 ? null : (
                 <Text className="bg-canvas px-4 pb-1 pt-3 text-[13px] font-medium text-muted">
-                  {t(`stock.types.${section.liquorType}`)}
+                  {knownTermLabel('types', section.liquorType, t)}
                 </Text>
               )
             }
@@ -183,8 +192,8 @@ function emptyCopyKey(kind: 'search' | 'filter' | 'catalog'): 'stock.emptySearch
 }
 
 function facetCount(
-  chip: StockFacet,
-  facets: { all: number; low: number; types: Record<(typeof LIQUOR_TYPES)[number], number> },
+  chip: string,
+  facets: { all: number; low: number; types: Record<string, number> },
 ): number {
   if (chip === 'all') {
     return facets.all;
@@ -192,17 +201,17 @@ function facetCount(
   if (chip === 'low') {
     return facets.low;
   }
-  return facets.types[chip];
+  return facets.types[chip] ?? 0;
 }
 
-function chipLabel(chip: StockFacet, t: (key: string) => string): string {
+function chipLabel(chip: string, t: (key: string) => string): string {
   if (chip === 'all') {
     return t('stock.all');
   }
   if (chip === 'low') {
     return t('stock.low');
   }
-  return t(`stock.types.${chip}`);
+  return knownTermLabel('types', chip, t);
 }
 
 function labelTone(selected: boolean, emphasize: boolean): string {

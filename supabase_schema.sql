@@ -14,6 +14,10 @@ CREATE TABLE IF NOT EXISTS public.tenants (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_name TEXT NOT NULL,
   license_number TEXT NOT NULL,
+  address TEXT NOT NULL DEFAULT '',
+  subscription_status TEXT NOT NULL DEFAULT 'active'
+    CHECK (subscription_status IN ('active', 'suspended', 'on-hold')),
+  table_count INTEGER NOT NULL DEFAULT 10 CHECK (table_count BETWEEN 1 AND 200),
   inactivity_timeout_minutes INTEGER NOT NULL DEFAULT 60 CHECK (inactivity_timeout_minutes > 0)
 );
 
@@ -130,6 +134,9 @@ BEGIN
       u.mpin_hash,
       t.business_name,
       t.license_number,
+      t.address,
+      t.subscription_status,
+      t.table_count,
       t.inactivity_timeout_minutes
     FROM public.users AS u
     JOIN public.tenants AS t ON t.id = u.tenant_id
@@ -175,6 +182,9 @@ BEGIN
       'id', found.tenant_id,
       'business_name', found.business_name,
       'license_number', found.license_number,
+      'address', found.address,
+      'subscription_status', found.subscription_status,
+      'table_count', found.table_count,
       'inactivity_timeout_minutes', found.inactivity_timeout_minutes
     )
   );
@@ -335,6 +345,163 @@ AS $fn$
   );
 $fn$;
 
+CREATE OR REPLACE FUNCTION private.update_own_account(
+  p_mobile TEXT,
+  p_current_mpin TEXT,
+  p_name TEXT,
+  p_new_mpin TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, private, extensions, pg_temp
+AS $fn$
+DECLARE
+  rec RECORD;
+  found RECORD;
+  match_count INTEGER := 0;
+  clean_name TEXT;
+BEGIN
+  IF p_mobile !~ '^[0-9]{10}$' OR p_current_mpin !~ '^[0-9]{4}$' THEN
+    RETURN jsonb_build_object('ok', FALSE, 'reason', 'invalid');
+  END IF;
+
+  IF private.is_locked(p_mobile) THEN
+    RETURN jsonb_build_object('ok', FALSE, 'reason', 'locked');
+  END IF;
+
+  clean_name := btrim(coalesce(p_name, ''));
+  IF clean_name = '' OR char_length(clean_name) > 80 THEN
+    RETURN jsonb_build_object('ok', FALSE, 'reason', 'validation');
+  END IF;
+
+  IF coalesce(p_new_mpin, '') <> '' AND p_new_mpin !~ '^[0-9]{4}$' THEN
+    RETURN jsonb_build_object('ok', FALSE, 'reason', 'validation');
+  END IF;
+
+  FOR rec IN
+    SELECT id, mpin_hash, is_active
+    FROM public.users
+    WHERE mobile_number = p_mobile
+  LOOP
+    IF private.mpin_matches(p_current_mpin, rec.mpin_hash) THEN
+      match_count := match_count + 1;
+      found := rec;
+    END IF;
+  END LOOP;
+
+  IF match_count <> 1 OR NOT found.is_active THEN
+    IF match_count = 0 THEN
+      PERFORM private.record_attempt(p_mobile, FALSE);
+    END IF;
+    RETURN jsonb_build_object('ok', FALSE, 'reason', 'invalid');
+  END IF;
+
+  UPDATE public.users
+  SET
+    name = clean_name,
+    mpin_hash = CASE
+      WHEN coalesce(p_new_mpin, '') = '' THEN mpin_hash
+      ELSE crypt(p_new_mpin, gen_salt('bf', 10))
+    END
+  WHERE id = found.id;
+
+  PERFORM private.record_attempt(p_mobile, TRUE);
+  RETURN jsonb_build_object('ok', TRUE);
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION private.update_tenant_profile(
+  p_mobile TEXT,
+  p_current_mpin TEXT,
+  p_business_name TEXT,
+  p_address TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, private, pg_temp
+AS $fn$
+DECLARE
+  rec RECORD;
+  found RECORD;
+  match_count INTEGER := 0;
+  clean_name TEXT;
+  clean_address TEXT;
+BEGIN
+  IF p_mobile !~ '^[0-9]{10}$' OR p_current_mpin !~ '^[0-9]{4}$' THEN
+    RETURN jsonb_build_object('ok', FALSE, 'reason', 'forbidden');
+  END IF;
+
+  IF private.is_locked(p_mobile) THEN
+    RETURN jsonb_build_object('ok', FALSE, 'reason', 'locked');
+  END IF;
+
+  clean_name := btrim(coalesce(p_business_name, ''));
+  clean_address := btrim(coalesce(p_address, ''));
+  IF clean_name = '' OR char_length(clean_name) > 80 OR char_length(clean_address) > 160 THEN
+    RETURN jsonb_build_object('ok', FALSE, 'reason', 'validation');
+  END IF;
+
+  FOR rec IN
+    SELECT id, tenant_id, mpin_hash
+    FROM public.users
+    WHERE mobile_number = p_mobile
+      AND role = 'ADMIN'
+      AND is_active = TRUE
+  LOOP
+    IF private.mpin_matches(p_current_mpin, rec.mpin_hash) THEN
+      match_count := match_count + 1;
+      found := rec;
+    END IF;
+  END LOOP;
+
+  IF match_count <> 1 THEN
+    IF match_count = 0 THEN
+      PERFORM private.record_attempt(p_mobile, FALSE);
+    END IF;
+    RETURN jsonb_build_object('ok', FALSE, 'reason', 'forbidden');
+  END IF;
+
+  UPDATE public.tenants
+  SET business_name = clean_name, address = clean_address
+  WHERE id = found.tenant_id;
+
+  PERFORM private.record_attempt(p_mobile, TRUE);
+  RETURN jsonb_build_object('ok', TRUE);
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.update_own_account(
+  p_mobile TEXT,
+  p_current_mpin TEXT,
+  p_name TEXT,
+  p_new_mpin TEXT
+)
+RETURNS JSONB
+LANGUAGE sql
+VOLATILE
+SECURITY INVOKER
+SET search_path = public, private, pg_temp
+AS $fn$
+  SELECT private.update_own_account(p_mobile, p_current_mpin, p_name, p_new_mpin);
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.update_tenant_profile(
+  p_mobile TEXT,
+  p_current_mpin TEXT,
+  p_business_name TEXT,
+  p_address TEXT
+)
+RETURNS JSONB
+LANGUAGE sql
+VOLATILE
+SECURITY INVOKER
+SET search_path = public, private, pg_temp
+AS $fn$
+  SELECT private.update_tenant_profile(p_mobile, p_current_mpin, p_business_name, p_address);
+$fn$;
+
 REVOKE ALL ON FUNCTION private.mpin_matches(TEXT, TEXT) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION private.is_locked(TEXT) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION private.record_attempt(TEXT, BOOLEAN) FROM PUBLIC, anon, authenticated;
@@ -347,6 +514,16 @@ GRANT EXECUTE ON FUNCTION private.verify_login(TEXT, TEXT) TO anon, authenticate
 GRANT EXECUTE ON FUNCTION private.sync_staff_member(TEXT, TEXT, UUID, UUID, TEXT, TEXT, TEXT, BOOLEAN) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.login_with_mpin(TEXT, TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.sync_staff_member(TEXT, TEXT, UUID, UUID, TEXT, TEXT, TEXT, BOOLEAN) TO anon, authenticated;
+
+REVOKE ALL ON FUNCTION private.update_own_account(TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION private.update_tenant_profile(TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.update_own_account(TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.update_tenant_profile(TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION private.update_own_account(TEXT, TEXT, TEXT, TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION private.update_tenant_profile(TEXT, TEXT, TEXT, TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.update_own_account(TEXT, TEXT, TEXT, TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.update_tenant_profile(TEXT, TEXT, TEXT, TEXT) TO anon, authenticated;
 
 -- Provision a tenant and its admin with the service role, for example:
 -- INSERT INTO public.tenants (business_name, license_number)

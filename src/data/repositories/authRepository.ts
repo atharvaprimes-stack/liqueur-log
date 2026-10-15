@@ -1,5 +1,5 @@
-import { AuthError } from '../../domain/errors';
-import type { AuthSession } from '../../domain/models/auth';
+import { AuthError, ProfileError } from '../../domain/errors';
+import type { AuthSession, Tenant, User } from '../../domain/models/auth';
 import { MOBILE_PATTERN, MPIN_PATTERN } from '../../domain/models/auth';
 import { hashMpin, verifyMpin } from '../../security/mpin';
 import {
@@ -8,9 +8,15 @@ import {
   setSessionInteractionAt,
 } from '../../security/sessionCredentials';
 import { getDatabase } from '../local/database';
-import { mapTenant, mapUser, type LoginRow, type TenantRow, type UserRow } from '../local/rows';
+import { mapTenant, mapUser, normalizeTableCount, type LoginRow, type TenantRow, type UserRow } from '../local/rows';
 import { isDeviceOnline } from '../network';
-import { loginRemotely, RemoteAuthUnavailable } from '../remote/authRemote';
+import {
+  loginRemotely,
+  RemoteAuthUnavailable,
+  updateAccountRemotely,
+  updateTableCountRemotely,
+  updateTenantRemotely,
+} from '../remote/authRemote';
 import { hasPendingUserSync } from '../remote/syncStaff';
 import { isSupabaseConfigured } from '../remote/supabaseClient';
 
@@ -100,7 +106,7 @@ export async function restoreSession(): Promise<AuthSession | null> {
     [session.user_id],
   );
   const tenantRow = await database.getFirstAsync<TenantRow>(
-    `SELECT id, business_name, license_number, inactivity_timeout_minutes
+    `SELECT id, business_name, license_number, address, subscription_status, table_count, inactivity_timeout_minutes
      FROM tenants WHERE id = ?`,
     [session.tenant_id],
   );
@@ -151,6 +157,9 @@ async function matchLocalSession(mobile: string, pin: string): Promise<AuthSessi
        users.is_active,
        tenants.business_name,
        tenants.license_number,
+       tenants.address,
+       tenants.subscription_status,
+       tenants.table_count,
        tenants.inactivity_timeout_minutes
      FROM users
      JOIN tenants ON tenants.id = users.tenant_id
@@ -186,6 +195,12 @@ async function matchLocalSession(mobile: string, pin: string): Promise<AuthSessi
       id: matches[0].tenant_id,
       businessName: matches[0].business_name,
       licenseNumber: matches[0].license_number,
+      address: matches[0].address ?? '',
+      subscriptionStatus:
+        matches[0].subscription_status === 'suspended' || matches[0].subscription_status === 'on-hold'
+          ? matches[0].subscription_status
+          : 'active',
+      tableCount: normalizeTableCount(matches[0].table_count),
       inactivityTimeoutMinutes: matches[0].inactivity_timeout_minutes,
     },
   };
@@ -196,16 +211,24 @@ async function persistSession(session: AuthSession, mpinHash: string): Promise<v
   const now = Date.now();
   await database.withTransactionAsync(async () => {
     await database.runAsync(
-      `INSERT INTO tenants (id, business_name, license_number, inactivity_timeout_minutes)
-       VALUES (?, ?, ?, ?)
+      `INSERT INTO tenants (
+         id, business_name, license_number, address, subscription_status, table_count, inactivity_timeout_minutes
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          business_name = excluded.business_name,
          license_number = excluded.license_number,
+         address = excluded.address,
+         subscription_status = excluded.subscription_status,
+         table_count = excluded.table_count,
          inactivity_timeout_minutes = excluded.inactivity_timeout_minutes`,
       [
         session.tenant.id,
         session.tenant.businessName,
         session.tenant.licenseNumber,
+        session.tenant.address,
+        session.tenant.subscriptionStatus,
+        session.tenant.tableCount,
         session.tenant.inactivityTimeoutMinutes,
       ],
     );
@@ -261,6 +284,179 @@ function rememberCredentials(session: AuthSession, mobile: string, pin: string):
     return;
   }
   clearSessionCredentials();
+}
+
+export async function updateOwnAccount(input: {
+  user: User;
+  name: string;
+  currentMpin: string;
+  newMpin: string;
+}): Promise<User> {
+  const name = input.name.trim().replace(/\s+/g, ' ');
+  const currentMpin = input.currentMpin.trim();
+  const newMpin = input.newMpin.trim();
+  if (!name || name.length > 80) {
+    throw new ProfileError('name');
+  }
+  if (!MPIN_PATTERN.test(currentMpin)) {
+    throw new ProfileError('mpin');
+  }
+  if (newMpin && !MPIN_PATTERN.test(newMpin)) {
+    throw new ProfileError('mpin');
+  }
+
+  const database = await getDatabase();
+  const row = await database.getFirstAsync<{ mpin_hash: string }>(
+    'SELECT mpin_hash FROM users WHERE id = ? AND tenant_id = ? AND is_active = 1',
+    [input.user.id, input.user.tenantId],
+  );
+  if (!row || !(await verifyMpin(currentMpin, row.mpin_hash))) {
+    throw new ProfileError('mpin');
+  }
+
+  await pushAccount(input.user, name, currentMpin, newMpin);
+  const nextHash = newMpin ? await hashMpin(newMpin) : row.mpin_hash;
+  await database.runAsync('UPDATE users SET name = ?, mpin_hash = ? WHERE id = ? AND tenant_id = ?', [
+    name,
+    nextHash,
+    input.user.id,
+    input.user.tenantId,
+  ]);
+
+  if (input.user.role === 'ADMIN' && newMpin) {
+    setSessionCredentials({ mobileNumber: input.user.mobileNumber, mpin: newMpin });
+  }
+
+  return { ...input.user, name };
+}
+
+export async function updateOwnTenant(input: {
+  user: User;
+  tenant: Tenant;
+  businessName: string;
+  address: string;
+  currentMpin: string;
+}): Promise<Tenant> {
+  if (input.user.role !== 'ADMIN') {
+    throw new ProfileError('forbidden');
+  }
+
+  const businessName = input.businessName.trim().replace(/\s+/g, ' ');
+  const address = input.address.trim().replace(/\s+/g, ' ');
+  const currentMpin = input.currentMpin.trim();
+  if (!businessName || businessName.length > 80) {
+    throw new ProfileError('business');
+  }
+  if (address.length > 160) {
+    throw new ProfileError('address');
+  }
+  if (!MPIN_PATTERN.test(currentMpin)) {
+    throw new ProfileError('mpin');
+  }
+
+  const database = await getDatabase();
+  const row = await database.getFirstAsync<{ mpin_hash: string }>(
+    `SELECT mpin_hash FROM users WHERE id = ? AND tenant_id = ? AND role = 'ADMIN' AND is_active = 1`,
+    [input.user.id, input.tenant.id],
+  );
+  if (!row || !(await verifyMpin(currentMpin, row.mpin_hash))) {
+    throw new ProfileError('mpin');
+  }
+
+  await pushTenant(input.user, businessName, address, currentMpin);
+  await database.runAsync('UPDATE tenants SET business_name = ?, address = ? WHERE id = ?', [
+    businessName,
+    address,
+    input.tenant.id,
+  ]);
+
+  return { ...input.tenant, businessName, address };
+}
+
+export async function updateTableCount(input: {
+  user: User;
+  tenant: Tenant;
+  tableCount: number;
+  currentMpin: string;
+}): Promise<Tenant> {
+  if (input.user.role !== 'ADMIN') {
+    throw new ProfileError('forbidden');
+  }
+  if (!Number.isInteger(input.tableCount) || input.tableCount < 1 || input.tableCount > 200) {
+    throw new ProfileError('tables');
+  }
+  const currentMpin = input.currentMpin.trim();
+  if (!MPIN_PATTERN.test(currentMpin)) {
+    throw new ProfileError('mpin');
+  }
+
+  const database = await getDatabase();
+  const row = await database.getFirstAsync<{ mpin_hash: string }>(
+    `SELECT mpin_hash FROM users WHERE id = ? AND tenant_id = ? AND role = 'ADMIN' AND is_active = 1`,
+    [input.user.id, input.tenant.id],
+  );
+  if (!row || !(await verifyMpin(currentMpin, row.mpin_hash))) {
+    throw new ProfileError('mpin');
+  }
+
+  if (isSupabaseConfigured()) {
+    if (!(await isDeviceOnline())) {
+      throw new ProfileError('offline');
+    }
+    const result = await updateTableCountRemotely({
+      mobileNumber: input.user.mobileNumber,
+      currentMpin,
+      tableCount: input.tableCount,
+    });
+    if (!result.ok) {
+      throw new ProfileError(result.reason === 'locked' ? 'locked' : result.reason === 'validation' ? 'tables' : 'forbidden');
+    }
+  }
+
+  await database.runAsync('UPDATE tenants SET table_count = ? WHERE id = ?', [input.tableCount, input.tenant.id]);
+  return { ...input.tenant, tableCount: input.tableCount };
+}
+
+async function pushAccount(user: User, name: string, currentMpin: string, newMpin: string): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    return;
+  }
+  if (!(await isDeviceOnline())) {
+    throw new ProfileError('offline');
+  }
+  const result = await updateAccountRemotely({
+    mobileNumber: user.mobileNumber,
+    currentMpin,
+    name,
+    newMpin,
+  });
+  if (!result.ok) {
+    if (result.reason === 'locked') {
+      throw new ProfileError('locked');
+    }
+    if (result.reason === 'validation') {
+      throw new ProfileError('name');
+    }
+    throw new ProfileError('mpin');
+  }
+}
+
+async function pushTenant(user: User, businessName: string, address: string, currentMpin: string): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    return;
+  }
+  if (!(await isDeviceOnline())) {
+    throw new ProfileError('offline');
+  }
+  const result = await updateTenantRemotely({
+    mobileNumber: user.mobileNumber,
+    currentMpin,
+    businessName,
+    address,
+  });
+  if (!result.ok) {
+    throw new ProfileError(result.reason === 'locked' ? 'locked' : result.reason === 'validation' ? 'business' : 'forbidden');
+  }
 }
 
 function timeoutMinutes(minutes: number): number {

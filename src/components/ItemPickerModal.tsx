@@ -8,10 +8,9 @@ import { formatRupeeInput, parseQuantity, sanitizeQuantityInput, sanitizeRupeeIn
 import {
   filterStock,
   itemNames,
-  LIQUOR_TYPES,
+  knownTermLabel,
   volumeMessage,
   type DraftLine,
-  type LiquorType,
   type StockItem,
 } from '../domain/models/inventory';
 import { useTheme } from '../theme/theme-context';
@@ -33,7 +32,7 @@ export function ItemPickerModal({ visible, items, lines, onClose, onApply }: Ite
   const { t, i18n } = useTranslation();
   const { palette, themeStyle } = useTheme();
   const [query, setQuery] = useState('');
-  const [category, setCategory] = useState<LiquorType | 'all'>('all');
+  const [category, setCategory] = useState('all');
   const [edits, setEdits] = useState<Record<string, LineEdit>>({});
   const wasVisible = useRef(false);
 
@@ -108,10 +107,10 @@ export function ItemPickerModal({ visible, items, lines, onClose, onApply }: Ite
               selected={category === 'all'}
               onPress={() => setCategory('all')}
             />
-            {LIQUOR_TYPES.map((type) => (
+            {typeNames(items).map((type) => (
               <CategoryChip
                 key={type}
-                label={t(`stock.types.${type}`)}
+                label={knownTermLabel('types', type, t)}
                 selected={category === type}
                 onPress={() => setCategory(type)}
               />
@@ -188,6 +187,16 @@ export function ItemPickerModal({ visible, items, lines, onClose, onApply }: Ite
       </View>
     </Modal>
   );
+}
+
+function typeNames(items: StockItem[]): string[] {
+  const names: string[] = [];
+  for (const item of items) {
+    if (!names.includes(item.liquorType)) {
+      names.push(item.liquorType);
+    }
+  }
+  return names;
 }
 
 function CategoryChip({
