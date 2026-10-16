@@ -1,3 +1,4 @@
+import { Platform, type ViewStyle } from 'react-native';
 import { vars } from 'nativewind';
 
 export const THEME_IDS = ['light', 'dark', 'amber'] as const;
@@ -14,11 +15,15 @@ export type ThemePalette = {
   accentInk: string;
   danger: string;
   success: string;
+  idle: string;
   tabBar: string;
   tabActive: string;
   tabInactive: string;
   tabBorderWidth: number;
   statusBar: 'light' | 'dark';
+  shadowColor: string;
+  shadowOpacity: number;
+  elevation: number;
 };
 
 type Channels = {
@@ -31,71 +36,80 @@ type Channels = {
   accentInk: string;
   danger: string;
   success: string;
+  idle: string;
 };
 
 type ThemeDefinition = {
   channels: Channels;
-  tabBar: string;
-  tabActive: string;
-  tabInactive: string;
+  /** Prefer canvas (dark/amber) or surface (light) for the tab bar. */
+  tabBarFrom: 'canvas' | 'surface';
   tabBorderWidth: number;
   statusBar: 'light' | 'dark';
+  shadowColor: string;
+  shadowOpacity: number;
+  elevation: number;
 };
 
 const definitions: Record<ThemeId, ThemeDefinition> = {
   light: {
     channels: {
-      canvas: '250 250 249',
-      surface: '255 255 255',
-      ink: '28 25 23',
-      muted: '87 83 78',
-      line: '214 211 209',
-      accent: '180 83 9',
-      accentInk: '255 251 235',
-      danger: '185 28 28',
-      success: '21 128 61',
+      canvas: '248 250 252', // #F8FAFC
+      surface: '255 255 255', // #FFFFFF
+      ink: '15 23 42', // #0F172A
+      muted: '100 116 139', // #64748B
+      line: '226 232 240', // #E2E8F0
+      accent: '99 102 241', // #6366F1
+      accentInk: '255 255 255', // #FFFFFF
+      danger: '239 68 68', // #EF4444
+      success: '16 185 129', // #10B981
+      idle: '148 163 184', // #94A3B8
     },
-    tabBar: '#ffffff',
-    tabActive: '#9a3412',
-    tabInactive: '#78716c',
+    tabBarFrom: 'surface',
     tabBorderWidth: 1,
     statusBar: 'dark',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.08,
+    elevation: 2,
   },
   dark: {
     channels: {
-      canvas: '12 10 9',
-      surface: '28 25 23',
-      ink: '250 250 249',
-      muted: '168 162 158',
-      line: '68 64 60',
-      accent: '245 158 11',
-      accentInk: '28 25 23',
-      danger: '248 113 113',
-      success: '74 222 128',
+      canvas: '15 23 42', // #0F172A
+      surface: '30 41 59', // #1E293B
+      ink: '248 250 252', // #F8FAFC
+      muted: '148 163 184', // #94A3B8
+      line: '51 65 85', // #334155
+      accent: '56 189 248', // #38BDF8
+      accentInk: '15 23 42', // #0F172A
+      danger: '248 113 113', // #F87171
+      success: '52 211 153', // #34D399
+      idle: '100 116 139', // #64748B
     },
-    tabBar: '#0c0a09',
-    tabActive: '#fbbf24',
-    tabInactive: '#a8a29e',
+    tabBarFrom: 'canvas',
     tabBorderWidth: 1,
     statusBar: 'light',
+    shadowColor: '#000000',
+    shadowOpacity: 0.45,
+    elevation: 4,
   },
   amber: {
     channels: {
-      canvas: '20 8 0',
-      surface: '48 22 4',
-      ink: '255 248 235',
-      muted: '255 214 140',
-      line: '245 158 11',
-      accent: '255 196 0',
-      accentInk: '28 12 0',
-      danger: '255 140 110',
-      success: '167 243 208',
+      canvas: '18 13 8', // #120D08
+      surface: '33 23 16', // #211710
+      ink: '253 230 138', // #FDE68A
+      muted: '161 130 102', // #A18266 — warm muted (not cool purple)
+      line: '61 43 31', // #3D2B1F
+      accent: '245 158 11', // #F59E0B
+      accentInk: '18 13 8', // #120D08
+      danger: '239 68 68', // #EF4444
+      success: '16 185 129', // #10B981
+      idle: '120 53 15', // #78350F
     },
-    tabBar: '#140800',
-    tabActive: '#ffe566',
-    tabInactive: '#ffc46b',
-    tabBorderWidth: 2,
+    tabBarFrom: 'canvas',
+    tabBorderWidth: 1,
     statusBar: 'light',
+    shadowColor: '#000000',
+    shadowOpacity: 0.5,
+    elevation: 4,
   },
 };
 
@@ -105,21 +119,26 @@ function hex(channels: string): string {
 }
 
 function toPalette(definition: ThemeDefinition): ThemePalette {
+  const { channels } = definition;
   return {
-    canvas: hex(definition.channels.canvas),
-    surface: hex(definition.channels.surface),
-    ink: hex(definition.channels.ink),
-    muted: hex(definition.channels.muted),
-    line: hex(definition.channels.line),
-    accent: hex(definition.channels.accent),
-    accentInk: hex(definition.channels.accentInk),
-    danger: hex(definition.channels.danger),
-    success: hex(definition.channels.success),
-    tabBar: definition.tabBar,
-    tabActive: definition.tabActive,
-    tabInactive: definition.tabInactive,
+    canvas: hex(channels.canvas),
+    surface: hex(channels.surface),
+    ink: hex(channels.ink),
+    muted: hex(channels.muted),
+    line: hex(channels.line),
+    accent: hex(channels.accent),
+    accentInk: hex(channels.accentInk),
+    danger: hex(channels.danger),
+    success: hex(channels.success),
+    idle: hex(channels.idle),
+    tabBar: hex(channels[definition.tabBarFrom]),
+    tabActive: hex(channels.accent),
+    tabInactive: hex(channels.muted),
     tabBorderWidth: definition.tabBorderWidth,
     statusBar: definition.statusBar,
+    shadowColor: definition.shadowColor,
+    shadowOpacity: definition.shadowOpacity,
+    elevation: definition.elevation,
   };
 }
 
@@ -129,40 +148,43 @@ export const palettes: Record<ThemeId, ThemePalette> = {
   amber: toPalette(definitions.amber),
 };
 
+/** Soft card elevation tuned per theme so surfaces lift cleanly in all modes. */
+export function getCardShadow(palette: ThemePalette): ViewStyle {
+  return (
+    Platform.select<ViewStyle>({
+      ios: {
+        shadowColor: palette.shadowColor,
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: palette.shadowOpacity,
+        shadowRadius: 14,
+      },
+      android: {
+        elevation: palette.elevation,
+      },
+      default: {},
+    }) ?? {}
+  );
+}
+
+function themeStyle(definition: ThemeDefinition) {
+  return vars({
+    '--color-canvas': definition.channels.canvas,
+    '--color-surface': definition.channels.surface,
+    '--color-ink': definition.channels.ink,
+    '--color-muted': definition.channels.muted,
+    '--color-line': definition.channels.line,
+    '--color-accent': definition.channels.accent,
+    '--color-accent-ink': definition.channels.accentInk,
+    '--color-danger': definition.channels.danger,
+    '--color-success': definition.channels.success,
+    '--color-idle': definition.channels.idle,
+  });
+}
+
 export const themeVars = {
-  light: vars({
-    '--color-canvas': definitions.light.channels.canvas,
-    '--color-surface': definitions.light.channels.surface,
-    '--color-ink': definitions.light.channels.ink,
-    '--color-muted': definitions.light.channels.muted,
-    '--color-line': definitions.light.channels.line,
-    '--color-accent': definitions.light.channels.accent,
-    '--color-accent-ink': definitions.light.channels.accentInk,
-    '--color-danger': definitions.light.channels.danger,
-    '--color-success': definitions.light.channels.success,
-  }),
-  dark: vars({
-    '--color-canvas': definitions.dark.channels.canvas,
-    '--color-surface': definitions.dark.channels.surface,
-    '--color-ink': definitions.dark.channels.ink,
-    '--color-muted': definitions.dark.channels.muted,
-    '--color-line': definitions.dark.channels.line,
-    '--color-accent': definitions.dark.channels.accent,
-    '--color-accent-ink': definitions.dark.channels.accentInk,
-    '--color-danger': definitions.dark.channels.danger,
-    '--color-success': definitions.dark.channels.success,
-  }),
-  amber: vars({
-    '--color-canvas': definitions.amber.channels.canvas,
-    '--color-surface': definitions.amber.channels.surface,
-    '--color-ink': definitions.amber.channels.ink,
-    '--color-muted': definitions.amber.channels.muted,
-    '--color-line': definitions.amber.channels.line,
-    '--color-accent': definitions.amber.channels.accent,
-    '--color-accent-ink': definitions.amber.channels.accentInk,
-    '--color-danger': definitions.amber.channels.danger,
-    '--color-success': definitions.amber.channels.success,
-  }),
+  light: themeStyle(definitions.light),
+  dark: themeStyle(definitions.dark),
+  amber: themeStyle(definitions.amber),
 };
 
 export function isThemeId(value: string | null | undefined): value is ThemeId {

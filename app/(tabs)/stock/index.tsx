@@ -1,22 +1,20 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, SectionList, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, RefreshControl, SectionList, Text, TextInput, View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
 import {
-  applyStockFacet,
   compactVolume,
-  filterStock,
+  filterStockEntrySearch,
   groupStock,
   isLowStock,
   itemNames,
   knownTermLabel,
-  stockFacetCounts,
-  type StockFacet,
   type StockItem,
 } from '../../../src/domain/models/inventory';
+import { useVoiceSearch } from '../../../src/hooks/useVoiceSearch';
 import { useInventory } from '../../../src/hooks/useInventory';
 import { useTheme } from '../../../src/theme/theme-context';
 
@@ -26,25 +24,17 @@ export default function StockScreen() {
   const language = i18n.language;
   const { items, itemTypes, isLoading, errorCode, isAdmin, reload } = useInventory();
   const [search, setSearch] = useState('');
-  const [facet, setFacet] = useState<StockFacet>('all');
   const [refreshing, setRefreshing] = useState(false);
+  const [selecting, setSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
-  const searched = useMemo(() => filterStock(items, search), [items, search]);
-  const facets = useMemo(() => stockFacetCounts(searched), [searched]);
-  const sections = useMemo(
-    () => groupStock(applyStockFacet(searched, facet), itemTypes),
-    [facet, itemTypes, searched],
-  );
-  const chips = useMemo(() => {
-    const ordered = [...itemTypes];
-    for (const type of Object.keys(facets.types)) {
-      if (!ordered.includes(type)) {
-        ordered.push(type);
-      }
-    }
-    const types = ordered.filter((type) => (facets.types[type] ?? 0) > 0 || facet === type);
-    return ['all', ...types, 'low'];
-  }, [facet, facets.types, itemTypes]);
+  const voice = useVoiceSearch((transcript) => {
+    setSearch(transcript);
+  }, language);
+
+  const searched = useMemo(() => filterStockEntrySearch(items, search), [items, search]);
+  const sections = useMemo(() => groupStock(searched, itemTypes), [itemTypes, searched]);
+  const selectedCount = selectedIds.size;
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -55,29 +45,47 @@ export default function StockScreen() {
     }
   }, [reload]);
 
-  const openItem = useCallback(
-    (item: StockItem) => {
-      if (!isAdmin) {
-        return;
-      }
-      router.push({ pathname: '/stock/purchase', params: { itemId: item.id } });
-    },
-    [isAdmin],
-  );
+  const startSelecting = () => {
+    setSelecting(true);
+    setSelectedIds(new Set());
+  };
 
-  let emptyKind: 'search' | 'filter' | 'catalog' = 'catalog';
-  if (search.trim()) {
-    emptyKind = 'search';
-  } else if (facet !== 'all') {
-    emptyKind = 'filter';
-  }
+  const cancelSelecting = () => {
+    setSelecting(false);
+    setSelectedIds(new Set());
+  };
+
+  const toggleItem = (itemId: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  };
+
+  const proceed = () => {
+    if (selectedCount === 0) {
+      return;
+    }
+    const itemIds = [...selectedIds].join(',');
+    setSelecting(false);
+    setSelectedIds(new Set());
+    router.push({ pathname: '/stock/purchase', params: { itemIds } });
+  };
+
+  const emptyKind: 'search' | 'catalog' = search.trim() ? 'search' : 'catalog';
 
   return (
     <ScreenWrapper padded={false}>
       <View className="flex-1">
-        {items.length > 0 ? (
-          <View className="pt-3">
-            <View className="mx-4 h-11 flex-row items-center rounded-xl border border-line bg-surface px-3">
+        {items.length > 0 || isLoading ? (
+          <View className="px-4 pb-3 pt-3">
+            <View className="h-11 flex-row items-center rounded-xl border border-line bg-surface px-3">
+              <Ionicons name="search" size={18} color={palette.muted} />
               <TextInput
                 value={search}
                 onChangeText={setSearch}
@@ -86,7 +94,7 @@ export default function StockScreen() {
                 autoCorrect={false}
                 autoCapitalize="none"
                 returnKeyType="search"
-                className="h-11 min-w-0 flex-1 py-0 text-base text-ink"
+                className="mx-2 h-11 min-w-0 flex-1 py-0 text-base text-ink"
                 style={{ textAlignVertical: 'center' }}
               />
               {search.length > 0 ? (
@@ -95,30 +103,30 @@ export default function StockScreen() {
                   accessibilityLabel={t('stock.clearSearch')}
                   hitSlop={8}
                   onPress={() => setSearch('')}
-                  className="h-11 w-11 items-center justify-center"
+                  className="mr-1 h-8 w-8 items-center justify-center"
                 >
                   <Ionicons name="close" size={18} color={palette.muted} />
                 </Pressable>
               ) : null}
-            </View>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              className="mx-4 mt-3 h-10"
-              contentContainerClassName="items-center gap-2"
-            >
-              {chips.map((chip) => (
-                <FacetChip
-                  key={chip}
-                  label={chipLabel(chip, t)}
-                  count={facetCount(chip, facets)}
-                  selected={facet === chip}
-                  emphasize={chip === 'low' && facet !== 'low' && facets.low > 0}
-                  onPress={() => setFacet(chip)}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t('stock.voiceSearch')}
+                onPress={() => {
+                  if (!voice.supported) {
+                    Alert.alert(t('stock.voiceUnavailableTitle'), t('stock.voiceUnavailableBody'));
+                    return;
+                  }
+                  voice.toggle();
+                }}
+                className={`h-8 w-8 items-center justify-center rounded-md ${voice.listening ? 'bg-accent' : ''}`}
+              >
+                <Ionicons
+                  name={voice.listening ? 'mic' : 'mic-outline'}
+                  size={18}
+                  color={voice.listening ? palette.accentInk : palette.ink}
                 />
-              ))}
-            </ScrollView>
-            <View className="h-3" />
+              </Pressable>
+            </View>
           </View>
         ) : null}
 
@@ -132,11 +140,10 @@ export default function StockScreen() {
           <SectionList
             sections={sections}
             keyExtractor={(item) => item.id}
-            key={facet}
             className="flex-1"
             contentContainerStyle={{ flexGrow: sections.length === 0 ? 1 : undefined, paddingBottom: 12 }}
             stickySectionHeadersEnabled
-            extraData={language}
+            extraData={{ language, selecting, selectedCount }}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             refreshControl={
@@ -157,124 +164,83 @@ export default function StockScreen() {
               )
             }
             renderItem={({ item }) => (
-              <StockRow item={item} language={language} isAdmin={isAdmin} onPress={openItem} />
+              <StockRow
+                item={item}
+                language={language}
+                selecting={selecting}
+                selected={selectedIds.has(item.id)}
+                onToggle={() => toggleItem(item.id)}
+              />
             )}
             ListEmptyComponent={
               <View className="flex-1 items-center justify-center px-6">
-                <Text className="text-center text-base text-muted">{t(emptyCopyKey(emptyKind))}</Text>
+                <Text className="text-center text-base text-muted">
+                  {t(emptyKind === 'search' ? 'stock.emptySearch' : 'stock.emptyCatalog')}
+                </Text>
                 {emptyKind === 'search' ? (
                   <Pressable accessibilityRole="button" onPress={() => setSearch('')} className="mt-3 h-11 justify-center">
                     <Text className="text-base font-semibold text-accent">{t('stock.clearSearch')}</Text>
-                  </Pressable>
-                ) : null}
-                {emptyKind === 'filter' ? (
-                  <Pressable accessibilityRole="button" onPress={() => setFacet('all')} className="mt-3 h-11 justify-center">
-                    <Text className="text-base font-semibold text-accent">{t('stock.showAll')}</Text>
                   </Pressable>
                 ) : null}
               </View>
             }
           />
         )}
+
+        {isAdmin ? (
+          <View className="border-t border-line bg-surface px-4 py-3">
+            {selecting ? (
+              <View className="gap-2">
+                <Text className="text-sm text-muted">{t('stock.selectHint')}</Text>
+                <View className="flex-row gap-2">
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={cancelSelecting}
+                    className="h-12 flex-1 items-center justify-center rounded-lg border border-line bg-canvas"
+                  >
+                    <Text className="text-base font-semibold text-ink">{t('common.cancel')}</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={selectedCount === 0}
+                    onPress={proceed}
+                    className="h-12 flex-[1.4] items-center justify-center rounded-lg bg-accent disabled:opacity-50"
+                  >
+                    <Text className="text-base font-semibold text-accent-ink">
+                      {t('stock.proceed', { count: selectedCount })}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                disabled={items.length === 0}
+                onPress={startSelecting}
+                className="h-12 items-center justify-center rounded-lg bg-accent disabled:opacity-50"
+              >
+                <Text className="text-base font-semibold text-accent-ink">{t('stock.add')}</Text>
+              </Pressable>
+            )}
+          </View>
+        ) : null}
       </View>
     </ScreenWrapper>
-  );
-}
-
-function emptyCopyKey(kind: 'search' | 'filter' | 'catalog'): 'stock.emptySearch' | 'stock.emptyFilter' | 'stock.emptyCatalog' {
-  if (kind === 'search') {
-    return 'stock.emptySearch';
-  }
-  if (kind === 'filter') {
-    return 'stock.emptyFilter';
-  }
-  return 'stock.emptyCatalog';
-}
-
-function facetCount(
-  chip: string,
-  facets: { all: number; low: number; types: Record<string, number> },
-): number {
-  if (chip === 'all') {
-    return facets.all;
-  }
-  if (chip === 'low') {
-    return facets.low;
-  }
-  return facets.types[chip] ?? 0;
-}
-
-function chipLabel(chip: string, t: (key: string) => string): string {
-  if (chip === 'all') {
-    return t('stock.all');
-  }
-  if (chip === 'low') {
-    return t('stock.low');
-  }
-  return knownTermLabel('types', chip, t);
-}
-
-function labelTone(selected: boolean, emphasize: boolean): string {
-  if (selected) {
-    return 'text-accent-ink';
-  }
-  if (emphasize) {
-    return 'text-danger';
-  }
-  return 'text-ink';
-}
-
-function countTone(selected: boolean, emphasize: boolean): string {
-  if (selected) {
-    return 'text-accent-ink';
-  }
-  if (emphasize) {
-    return 'text-danger';
-  }
-  return 'text-muted';
-}
-
-function FacetChip({
-  label,
-  count,
-  selected,
-  emphasize,
-  onPress,
-}: {
-  label: string;
-  count: number;
-  selected: boolean;
-  emphasize: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ selected }}
-      accessibilityLabel={`${label}, ${count}`}
-      onPress={onPress}
-      className={`h-10 flex-row items-center gap-1 rounded-lg border px-3 ${
-        selected ? 'border-accent bg-accent' : 'border-line bg-surface'
-      }`}
-    >
-      <Text className={`text-[13px] font-semibold ${labelTone(selected, emphasize)}`}>{label}</Text>
-      <Text className={`text-[13px] font-semibold ${countTone(selected, emphasize)}`} style={{ fontVariant: ['tabular-nums'] }}>
-        {count}
-      </Text>
-    </Pressable>
   );
 }
 
 function StockRow({
   item,
   language,
-  isAdmin,
-  onPress,
+  selecting,
+  selected,
+  onToggle,
 }: {
   item: StockItem;
   language: string;
-  isAdmin: boolean;
-  onPress: (item: StockItem) => void;
+  selecting: boolean;
+  selected: boolean;
+  onToggle: () => void;
 }) {
   const { t } = useTranslation();
   const { palette } = useTheme();
@@ -294,8 +260,18 @@ function StockRow({
   }
   const rowLabel = t('stock.rowLabel', { name, detail, count: item.currentStock, status });
   const rowClass = 'min-h-16 flex-row items-center gap-3 border-b border-line px-4 py-2';
+
   const body = (
     <>
+      {selecting ? (
+        <View
+          className={`h-6 w-6 items-center justify-center rounded-md border ${
+            selected ? 'border-accent bg-accent' : 'border-line bg-surface'
+          }`}
+        >
+          {selected ? <Text className="text-xs font-bold text-accent-ink">✓</Text> : null}
+        </View>
+      ) : null}
       <View className="min-w-0 flex-1">
         <Text
           className="text-base font-medium text-ink"
@@ -328,24 +304,25 @@ function StockRow({
     </>
   );
 
-  if (!isAdmin) {
+  if (selecting) {
     return (
-      <View accessibilityRole="text" accessibilityLabel={rowLabel} className={rowClass}>
+      <Pressable
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: selected }}
+        accessibilityLabel={rowLabel}
+        onPress={onToggle}
+        android_ripple={{ color: palette.line }}
+        className={rowClass}
+      >
         {body}
-      </View>
+      </Pressable>
     );
   }
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={rowLabel}
-      onPress={() => onPress(item)}
-      android_ripple={{ color: palette.line }}
-      className={rowClass}
-    >
+    <View accessibilityRole="text" accessibilityLabel={rowLabel} className={rowClass}>
       {body}
-    </Pressable>
+    </View>
   );
 }
 

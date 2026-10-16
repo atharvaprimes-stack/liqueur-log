@@ -4,11 +4,13 @@ import { Redirect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
+import { ActionRow } from '../../../src/components/FormActions';
 import { StaffFormModal } from '../../../src/components/StaffFormModal';
 import { useAuth } from '../../../src/context/AuthContext';
 import { useTheme } from '../../../src/theme/theme-context';
 import type { User } from '../../../src/domain/models/auth';
 import { useManageStaff } from '../../../src/domain/usecases/ManageStaffUseCase';
+import { leaveScreen } from '../../../src/navigation/leave';
 
 type EditorState = { mode: 'create' } | { mode: 'edit'; staff: User } | null;
 
@@ -76,7 +78,7 @@ export default function ManageStaffScreen() {
   };
 
   return (
-    <ScreenWrapper showBackButton padded={false}>
+    <ScreenWrapper padded={false}>
       <View className="relative flex-1">
         <FlatList
           data={[...activeStaff, ...inactiveStaff]}
@@ -87,16 +89,6 @@ export default function ManageStaffScreen() {
             <View className="pb-4">
               <Text className="text-display font-semibold text-ink">{t('staff.title')}</Text>
               <Text className="mt-2 text-body text-muted">{t('staff.body')}</Text>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  setFormError(null);
-                  setEditor({ mode: 'create' });
-                }}
-                className="mt-5 h-14 items-center justify-center rounded-lg bg-accent"
-              >
-                <Text className="text-body font-semibold text-accent-ink">{t('staff.add')}</Text>
-              </Pressable>
               {error ? <Text className="mt-4 text-sm text-danger">{error}</Text> : null}
               {formError ? <Text className="mt-4 text-sm text-danger">{formError}</Text> : null}
               {isLoading ? <ActivityIndicator className="mt-6" color={palette.accent} /> : null}
@@ -145,6 +137,19 @@ export default function ManageStaffScreen() {
           ListEmptyComponent={
             isLoading ? null : <Text className="text-center text-body text-muted">{t('staff.empty')}</Text>
           }
+        />
+
+        <ActionRow
+          pinned
+          leading={{ label: t('common.cancel'), onPress: () => leaveScreen('/menu') }}
+          trailing={{
+            label: t('staff.add'),
+            onPress: () => {
+              setFormError(null);
+              setEditor({ mode: 'create' });
+            },
+            tone: 'accent',
+          }}
         />
 
         <StaffFormModal

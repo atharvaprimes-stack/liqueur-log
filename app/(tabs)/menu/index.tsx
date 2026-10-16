@@ -14,6 +14,12 @@ const THEME_LABELS: Record<ThemeId, 'menu.light' | 'menu.dark' | 'menu.amberComp
   amber: 'menu.amberCompact',
 };
 
+const THEME_HINTS: Record<ThemeId, 'menu.lightHint' | 'menu.darkHint' | 'menu.amberHint'> = {
+  light: 'menu.lightHint',
+  dark: 'menu.darkHint',
+  amber: 'menu.amberHint',
+};
+
 export default function MenuScreen() {
   const { t, i18n } = useTranslation();
   const { currentUser, logout } = useAuth();
@@ -27,6 +33,7 @@ export default function MenuScreen() {
         <View className="overflow-hidden rounded-lg border border-line bg-surface">
           <View className="gap-2 px-4 py-3">
             <Text className="text-sm font-semibold text-muted">{t('menu.appearance')}</Text>
+            <Text className="text-sm text-muted">{t('menu.appearanceBody')}</Text>
             <View className="flex-row gap-1 rounded-lg bg-canvas p-1">
               {THEME_IDS.map((option) => {
                 const selected = theme === option;
@@ -35,6 +42,7 @@ export default function MenuScreen() {
                     key={option}
                     accessibilityRole="button"
                     accessibilityState={{ selected }}
+                    accessibilityHint={t(THEME_HINTS[option])}
                     onPress={() => setTheme(option)}
                     className={`h-10 min-w-0 flex-1 flex-row items-center justify-center gap-1.5 rounded-lg px-1 ${
                       selected ? 'bg-accent' : ''
@@ -54,6 +62,7 @@ export default function MenuScreen() {
                 );
               })}
             </View>
+            <Text className="text-sm text-muted">{t(THEME_HINTS[theme])}</Text>
           </View>
           <View className="mx-4 h-px bg-line" />
           <View className="gap-2 px-4 py-3">
@@ -130,6 +139,12 @@ export default function MenuScreen() {
               onPress={() => router.push('/menu/vendors')}
             />
             <SettingLink
+              icon="archive-outline"
+              title={t('menu.stockEntry')}
+              hint={t('menu.stockEntryHint')}
+              onPress={() => router.push('/stock/purchase')}
+            />
+            <SettingLink
               icon="people-outline"
               title={t('menu.staff')}
               hint={t('menu.staffHint')}
@@ -187,6 +202,7 @@ function SettingLink({
     | 'flash-outline'
     | 'cube-outline'
     | 'storefront-outline'
+    | 'archive-outline'
     | 'people-outline';
   title: string;
   hint: string;

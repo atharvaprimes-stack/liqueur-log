@@ -19,6 +19,7 @@ import {
 } from '../remote/authRemote';
 import { hasPendingUserSync } from '../remote/syncStaff';
 import { isSupabaseConfigured } from '../remote/supabaseClient';
+import { syncNow } from '../sync/engine';
 
 const CURRENT_SESSION_ID = 'current';
 
@@ -39,10 +40,7 @@ export async function authenticate(mobileNumber: string, mpin: string): Promise<
     try {
       const remote = await loginRemotely(mobile, pin);
       if (remote.ok) {
-        const session = { user: remote.user, tenant: remote.tenant };
-        await persistSession(session, await hashMpin(pin));
-        rememberCredentials(session, mobile, pin);
-        return session;
+        return finishLogin({ user: remote.user, tenant: remote.tenant }, mobile, pin, await hashMpin(pin));
       }
 
       if (remote.reason === 'inactive') {
@@ -58,9 +56,7 @@ export async function authenticate(mobileNumber: string, mpin: string): Promise<
 
       const pending = await matchLocalSession(mobile, pin);
       if (pending && (await hasPendingUserSync(pending.user.id))) {
-        await persistSession(pending, await currentHash(pending.user.id));
-        rememberCredentials(pending, mobile, pin);
-        return pending;
+        return finishLogin(pending, mobile, pin, await currentHash(pending.user.id));
       }
 
       throw new AuthError('invalid');
@@ -68,15 +64,15 @@ export async function authenticate(mobileNumber: string, mpin: string): Promise<
       if (error instanceof AuthError) {
         throw error;
       }
-      if (!(error instanceof RemoteAuthUnavailable)) {
-        const local = await matchLocalSession(mobile, pin);
-        if (local) {
-          await persistSession(local, await currentHash(local.user.id));
-          rememberCredentials(local, mobile, pin);
-          return local;
-        }
-        throw new AuthError('invalid');
+      const local = await matchLocalSession(mobile, pin);
+      if (local) {
+        return finishLogin(local, mobile, pin, await currentHash(local.user.id));
       }
+      // Remote unreachable and no local session — don't mask as bad credentials.
+      if (error instanceof RemoteAuthUnavailable) {
+        throw error;
+      }
+      throw new AuthError('invalid');
     }
   }
 
@@ -85,9 +81,14 @@ export async function authenticate(mobileNumber: string, mpin: string): Promise<
     throw new AuthError('invalid');
   }
 
-  await persistSession(local, await currentHash(local.user.id));
-  rememberCredentials(local, mobile, pin);
-  return local;
+  return finishLogin(local, mobile, pin, await currentHash(local.user.id));
+}
+
+async function finishLogin(session: AuthSession, mobile: string, pin: string, mpinHash: string): Promise<AuthSession> {
+  await persistSession(session, mpinHash);
+  rememberCredentials(mobile, pin);
+  await syncNow().catch(() => undefined);
+  return session;
 }
 
 export async function restoreSession(): Promise<AuthSession | null> {
@@ -278,12 +279,8 @@ async function deactivateLocalUser(userId: string): Promise<void> {
   await database.runAsync('UPDATE users SET is_active = 0 WHERE id = ?', [userId]);
 }
 
-function rememberCredentials(session: AuthSession, mobile: string, pin: string): void {
-  if (session.user.role === 'ADMIN') {
-    setSessionCredentials({ mobileNumber: mobile, mpin: pin });
-    return;
-  }
-  clearSessionCredentials();
+function rememberCredentials(mobile: string, pin: string): void {
+  setSessionCredentials({ mobileNumber: mobile, mpin: pin });
 }
 
 export async function updateOwnAccount(input: {

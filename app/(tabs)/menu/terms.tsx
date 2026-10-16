@@ -14,11 +14,13 @@ import { Redirect, useLocalSearchParams } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
+import { ActionRow } from '../../../src/components/FormActions';
 import { useAuth } from '../../../src/context/AuthContext';
 import { inventoryErrorCode, type InventoryErrorCode } from '../../../src/domain/errors';
 import { knownTermLabel, type CatalogTerm } from '../../../src/domain/models/inventory';
 import { type CatalogTermKind } from '../../../src/data/repositories/inventoryRepository';
 import { useCatalog } from '../../../src/hooks/useCatalog';
+import { leaveScreen } from '../../../src/navigation/leave';
 import { useTheme } from '../../../src/theme/theme-context';
 
 type EditorState = { mode: 'create' } | { mode: 'edit'; term: CatalogTerm } | null;
@@ -118,7 +120,7 @@ export default function ManageTermsScreen() {
         : t('terms.createType');
 
   return (
-    <ScreenWrapper showBackButton padded={false}>
+    <ScreenWrapper padded={false}>
       <View className="flex-1">
         <View className="px-4 pb-3 pt-4">
           <Text className="text-title font-semibold text-ink">{title}</Text>
@@ -133,13 +135,6 @@ export default function ManageTermsScreen() {
               className="h-11 min-w-0 flex-1 py-0 text-base text-ink"
             />
           </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={openCreate}
-            className="mt-3 h-12 items-center justify-center rounded-lg bg-accent"
-          >
-            <Text className="text-base font-semibold text-accent-ink">{addLabel}</Text>
-          </Pressable>
           {errorCode ? <Text className="mt-3 text-sm text-danger">{t(`terms.errors.${errorCode}`)}</Text> : null}
         </View>
 
@@ -169,6 +164,11 @@ export default function ManageTermsScreen() {
           </ScrollView>
         )}
       </View>
+      <ActionRow
+        pinned
+        leading={{ label: t('common.cancel'), onPress: () => leaveScreen('/menu') }}
+        trailing={{ label: addLabel, onPress: openCreate, tone: 'accent' }}
+      />
 
       <Modal visible={editor !== null} transparent animationType="slide" onRequestClose={() => !saving && setEditor(null)}>
         <KeyboardAvoidingView
@@ -217,36 +217,39 @@ export default function ManageTermsScreen() {
                 />
                 {formError ? <Text className="mt-3 text-sm text-danger">{t(`terms.errors.${formError}`)}</Text> : null}
                 <View className="mt-6 flex-row gap-3">
-                  {editor?.mode === 'edit' ? (
-                    <Pressable
-                      accessibilityRole="button"
-                      disabled={saving}
-                      onPress={() => setConfirmDelete(true)}
-                      className="h-12 flex-1 items-center justify-center rounded-lg border border-line bg-canvas"
-                    >
-                      <Text className="text-base font-semibold text-danger">{t('terms.delete')}</Text>
-                    </Pressable>
-                  ) : (
-                    <Pressable
-                      accessibilityRole="button"
-                      disabled={saving}
-                      onPress={() => setEditor(null)}
-                      className="h-12 flex-1 items-center justify-center rounded-lg border border-line bg-canvas"
-                    >
-                      <Text className="text-base font-semibold text-ink">{t('terms.cancel')}</Text>
-                    </Pressable>
-                  )}
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={saving}
+                    onPress={() => setEditor(null)}
+                    className="h-12 flex-1 items-center justify-center rounded-lg border border-line bg-canvas disabled:opacity-50"
+                  >
+                    <Text className="text-base font-semibold text-ink">{t('terms.cancel')}</Text>
+                  </Pressable>
                   <Pressable
                     accessibilityRole="button"
                     disabled={saving}
                     onPress={() => {
                       void onSave();
                     }}
-                    className="h-12 flex-1 items-center justify-center rounded-lg bg-accent"
+                    className="h-12 flex-1 items-center justify-center rounded-lg bg-accent disabled:opacity-50"
                   >
-                    <Text className="text-base font-semibold text-accent-ink">{t('terms.save')}</Text>
+                    {saving ? (
+                      <ActivityIndicator color={palette.accentInk} />
+                    ) : (
+                      <Text className="text-base font-semibold text-accent-ink">{t('terms.save')}</Text>
+                    )}
                   </Pressable>
                 </View>
+                {editor?.mode === 'edit' ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={saving}
+                    onPress={() => setConfirmDelete(true)}
+                    className="mt-2 h-12 items-center justify-center"
+                  >
+                    <Text className="text-base font-semibold text-danger">{t('terms.delete')}</Text>
+                  </Pressable>
+                ) : null}
               </>
             )}
           </View>

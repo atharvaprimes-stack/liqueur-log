@@ -1,0 +1,227 @@
+import { Platform } from 'react-native';
+import * as IntentLauncher from 'expo-intent-launcher';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
+import { File as ExpoFile, Paths } from 'expo-file-system';
+
+import type { ReceiptPayload } from '../domain/billing';
+import { buildReceiptDocument, type ReceiptCopy } from '../domain/receiptDocument';
+import { buildReceiptPdf } from './receiptPdf';
+
+const WHATSAPP_PACKAGES = ['com.whatsapp', 'com.whatsapp.w4b'];
+const FLAG_GRANT_READ_URI_PERMISSION = 1;
+
+export type ShareReceiptResult = 'shared' | 'downloaded' | 'unopened';
+
+export async function sharePdfDocument(bytes: Uint8Array, fileName: string): Promise<ShareReceiptResult> {
+  if (Platform.OS === 'web') {
+    return sharePdfOnWeb(bytes, fileName);
+  }
+  return shareReceiptPdf(await writePdfFile(bytes, fileName));
+}
+
+export async function printPdfDocument(bytes: Uint8Array, fileName: string): Promise<void> {
+  if (Platform.OS === 'web') {
+    await printPdfOnWeb(bytes);
+    return;
+  }
+  await printReceiptPdf(await writePdfFile(bytes, fileName));
+}
+
+export async function shareReceipt(receipt: ReceiptPayload, copy: ReceiptCopy): Promise<ShareReceiptResult> {
+  const pdf = await buildReceiptPdf(receipt, copy);
+  return sharePdfDocument(pdf.bytes, pdf.fileName);
+}
+
+export async function printReceipt(receipt: ReceiptPayload, copy: ReceiptCopy): Promise<void> {
+  if (Platform.OS === 'web') {
+    await printReceiptHtml(buildReceiptDocument(receipt, copy).html);
+    return;
+  }
+  const pdf = await buildReceiptPdf(receipt, copy);
+  await printPdfDocument(pdf.bytes, pdf.fileName);
+}
+
+export async function shareAndPrintReceipt(receipt: ReceiptPayload, copy: ReceiptCopy): Promise<ShareReceiptResult> {
+  const pdf = await buildReceiptPdf(receipt, copy);
+  const shared = await sharePdfDocument(pdf.bytes, pdf.fileName);
+  try {
+    if (Platform.OS === 'web') {
+      await printReceiptHtml(buildReceiptDocument(receipt, copy).html);
+    } else {
+      await printPdfDocument(pdf.bytes, pdf.fileName);
+    }
+  } catch {
+    // The bill is already closed. A closed print dialog should not undo the share.
+  }
+  return shared;
+}
+
+async function writePdfFile(bytes: Uint8Array, fileName: string): Promise<string> {
+  const destination = new ExpoFile(Paths.cache, fileName);
+  if (destination.exists) {
+    destination.delete();
+  }
+  destination.create();
+  destination.write(bytes);
+  return destination.uri;
+}
+
+async function shareReceiptPdf(uri: string): Promise<ShareReceiptResult> {
+  if (Platform.OS === 'android') {
+    const opened = await openWhatsApp(uri);
+    if (opened) {
+      return 'shared';
+    }
+  }
+
+  const available = await Sharing.isAvailableAsync();
+  if (!available) {
+    return 'unopened';
+  }
+  await Sharing.shareAsync(uri, {
+    mimeType: 'application/pdf',
+    UTI: 'com.adobe.pdf',
+    dialogTitle: 'WhatsApp',
+  });
+  return 'shared';
+}
+
+async function openWhatsApp(uri: string): Promise<boolean> {
+  const contentUri = new ExpoFile(uri).contentUri;
+  for (const packageName of WHATSAPP_PACKAGES) {
+    try {
+      await IntentLauncher.startActivityAsync('android.intent.action.SEND', {
+        type: 'application/pdf',
+        packageName,
+        flags: FLAG_GRANT_READ_URI_PERMISSION,
+        extra: {
+          'android.intent.extra.STREAM': contentUri,
+        },
+      });
+      return true;
+    } catch {
+      // This WhatsApp package is not installed. Try the next one.
+    }
+  }
+  return false;
+}
+
+async function printReceiptPdf(uri: string): Promise<void> {
+  try {
+    await Print.printAsync({ uri });
+  } catch {
+    // The print window was closed before a printer was chosen.
+  }
+}
+
+function pdfBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  return Uint8Array.from(bytes);
+}
+
+async function sharePdfOnWeb(bytes: Uint8Array, fileName: string): Promise<ShareReceiptResult> {
+  const file = new File([pdfBytes(bytes)], fileName, { type: 'application/pdf' });
+  if (typeof navigator.share === 'function' && navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: fileName });
+      return 'shared';
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return 'shared';
+      }
+    }
+  }
+  downloadPdf(bytes, fileName);
+  return 'downloaded';
+}
+
+function downloadPdf(bytes: Uint8Array, fileName: string): void {
+  const blob = new Blob([pdfBytes(bytes)], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+function printPdfOnWeb(bytes: Uint8Array): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(new Blob([pdfBytes(bytes)], { type: 'application/pdf' }));
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.position = 'fixed';
+    frame.style.left = '0';
+    frame.style.top = '0';
+    frame.style.width = '210mm';
+    frame.style.height = '297mm';
+    frame.style.border = '0';
+    frame.style.zIndex = '-1';
+    frame.style.pointerEvents = 'none';
+    frame.src = url;
+    document.body.appendChild(frame);
+    frame.onload = () => {
+      const cleanup = () => {
+        window.setTimeout(() => {
+          frame.remove();
+          URL.revokeObjectURL(url);
+        }, 400);
+      };
+      try {
+        frame.contentWindow?.addEventListener('afterprint', cleanup, { once: true });
+        frame.contentWindow?.focus();
+        frame.contentWindow?.print();
+        window.setTimeout(cleanup, 60_000);
+        resolve();
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    };
+  });
+}
+
+function printReceiptHtml(html: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.position = 'fixed';
+    frame.style.left = '0';
+    frame.style.top = '0';
+    frame.style.width = '58mm';
+    frame.style.height = '100%';
+    frame.style.border = '0';
+    frame.style.zIndex = '-1';
+    frame.style.pointerEvents = 'none';
+    document.body.appendChild(frame);
+
+    const doc = frame.contentDocument;
+    const win = frame.contentWindow;
+    if (!doc || !win) {
+      frame.remove();
+      reject(new Error('print'));
+      return;
+    }
+
+    doc.open();
+    doc.write(html);
+    doc.close();
+    window.setTimeout(() => {
+      const cleanup = () => {
+        window.setTimeout(() => frame.remove(), 400);
+      };
+      try {
+        win.addEventListener('afterprint', cleanup, { once: true });
+        win.focus();
+        win.print();
+        window.setTimeout(cleanup, 60_000);
+        resolve();
+      } catch (error) {
+        frame.remove();
+        reject(error);
+      }
+    }, 250);
+  });
+}

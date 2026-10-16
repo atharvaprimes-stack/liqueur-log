@@ -3,7 +3,8 @@ import { parseQuantity, parseRupeeToPaise } from '../money';
 
 export const DEFAULT_ITEM_TYPES = ['IMFL', 'Beer', 'Wine', 'Foreign', 'Country', 'Snacks'] as const;
 export const DEFAULT_ITEM_STRENGTHS = ['Strong', 'Mild'] as const;
-export const PAYMENT_TYPES = ['Cash', 'UPI', 'Credit'] as const;
+export const PAYMENT_TYPES = ['Cash', 'Partial', 'Credit'] as const;
+export const STOCK_PICKER_CATEGORIES = ['all', 'liquor', 'beer', 'kitchen'] as const;
 
 export type LiquorType = string;
 export type SubType = string;
@@ -15,6 +16,7 @@ export type CatalogTerm = {
   sortOrder: number;
 };
 export type PaymentType = (typeof PAYMENT_TYPES)[number];
+export type StockPickerCategory = (typeof STOCK_PICKER_CATEGORIES)[number];
 
 export type StockItem = {
   id: string;
@@ -80,6 +82,8 @@ export type PurchaseFormInput = {
   supplierName: string;
   invoiceNumber: string;
   paymentType: string;
+  /** Cash amount paid now; required when paymentType is Partial. */
+  amountPaid?: string;
   lines: DraftLine[];
 };
 
@@ -215,6 +219,81 @@ export function applyStockFacet(items: StockItem[], facet: StockFacet): StockIte
   return items.filter((item) => item.liquorType === facet);
 }
 
+export function isKitchenItem(item: Pick<StockItem, 'liquorType'> | { liquorType: string }): boolean {
+  return item.liquorType === 'Snacks';
+}
+
+export type OrderCatalogSection = 'bar' | 'kitchen';
+
+export const TOP_SELLERS_LIMIT = 8;
+
+export function filterOrderSection(items: StockItem[], section: OrderCatalogSection): StockItem[] {
+  return items.filter((item) => (section === 'kitchen' ? isKitchenItem(item) : !isKitchenItem(item)));
+}
+
+/** Search matches item code or display names only (not brand/type). */
+export function filterOrderSearch(items: StockItem[], query: string): StockItem[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) {
+    return items;
+  }
+
+  return items.filter((item) =>
+    [item.itemCode, item.nameEn, item.nameMr].some((value) => value.toLowerCase().includes(needle)),
+  );
+}
+
+export function filterOrderCatalog(
+  items: StockItem[],
+  section: OrderCatalogSection,
+  query: string,
+): StockItem[] {
+  return filterOrderSearch(filterOrderSection(items, section), query);
+}
+
+/** Cap to a small grid of frequent sellers for the selected tab; never the full catalog. */
+export function pickTopSellers(
+  sectionItems: StockItem[],
+  frequentIds: readonly string[],
+  limit: number = TOP_SELLERS_LIMIT,
+): StockItem[] {
+  if (limit <= 0 || sectionItems.length === 0) {
+    return [];
+  }
+
+  const remaining = new Map(sectionItems.map((item) => [item.id, item]));
+  const picked: StockItem[] = [];
+
+  for (const id of frequentIds) {
+    const item = remaining.get(id);
+    if (!item) {
+      continue;
+    }
+    picked.push(item);
+    remaining.delete(id);
+    if (picked.length >= limit) {
+      return picked;
+    }
+  }
+
+  const leftovers = [...remaining.values()].sort((left, right) => {
+    const stockDelta = Number(right.currentStock > 0) - Number(left.currentStock > 0);
+    if (stockDelta !== 0) {
+      return stockDelta;
+    }
+    return left.itemCode.localeCompare(right.itemCode);
+  });
+
+  for (const item of leftovers) {
+    picked.push(item);
+    if (picked.length >= limit) {
+      break;
+    }
+  }
+
+  return picked;
+}
+
 export function filterStock(items: StockItem[], query: string): StockItem[] {
   const needle = query.trim().toLowerCase();
   if (!needle) {
@@ -226,6 +305,31 @@ export function filterStock(items: StockItem[], query: string): StockItem[] {
       value.toLowerCase().includes(needle),
     ),
   );
+}
+
+/** Fast stock-entry search: item code or display names only. */
+export function filterStockEntrySearch(items: StockItem[], query: string): StockItem[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) {
+    return items;
+  }
+
+  return items.filter((item) =>
+    [item.itemCode, item.nameEn, item.nameMr].some((value) => value.toLowerCase().includes(needle)),
+  );
+}
+
+export function filterStockPickerCategory(items: StockItem[], category: StockPickerCategory): StockItem[] {
+  if (category === 'all') {
+    return items;
+  }
+  if (category === 'beer') {
+    return items.filter((item) => item.liquorType === 'Beer');
+  }
+  if (category === 'kitchen') {
+    return items.filter(isKitchenItem);
+  }
+  return items.filter((item) => item.liquorType !== 'Beer' && !isKitchenItem(item));
 }
 
 export function groupStock(items: StockItem[], typeOrder: readonly string[] = DEFAULT_ITEM_TYPES): StockSection[] {
@@ -342,13 +446,24 @@ export function buildPurchaseRecord(input: PurchaseFormInput): PurchaseDraft {
     throw new InventoryValidationError('price');
   }
 
+  let paidPaise = totalPaise;
+  if (input.paymentType === 'Credit') {
+    paidPaise = 0;
+  } else if (input.paymentType === 'Partial') {
+    const parsed = parseRupeeToPaise(input.amountPaid ?? '');
+    if (parsed === null || parsed <= 0 || parsed >= totalPaise) {
+      throw new InventoryValidationError('amount-paid');
+    }
+    paidPaise = parsed;
+  }
+
   return {
     supplierName,
     invoiceNumber,
     paymentType: input.paymentType,
     lines,
     totalPaise,
-    paidPaise: input.paymentType === 'Credit' ? 0 : totalPaise,
+    paidPaise,
   };
 }
 

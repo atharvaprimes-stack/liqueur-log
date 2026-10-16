@@ -135,10 +135,14 @@ BEGIN
     END IF;
   END LOOP;
 
-  IF match_count <> 1 OR NOT found.is_active THEN
+  IF match_count <> 1 THEN
     IF match_count = 0 THEN
       PERFORM private.record_attempt(p_mobile, FALSE);
     END IF;
+    RETURN jsonb_build_object('ok', FALSE, 'reason', 'invalid');
+  END IF;
+
+  IF NOT found.is_active THEN
     RETURN jsonb_build_object('ok', FALSE, 'reason', 'invalid');
   END IF;
 
