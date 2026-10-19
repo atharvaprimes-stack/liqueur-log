@@ -5,6 +5,7 @@ import { Redirect, router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
+import { ActionRow } from '../../../src/components/FormActions';
 import { useAuth } from '../../../src/context/AuthContext';
 import {
   compactVolume,
@@ -15,6 +16,7 @@ import {
   type StockItem,
 } from '../../../src/domain/models/inventory';
 import { useCatalog } from '../../../src/hooks/useCatalog';
+import { leaveScreen } from '../../../src/navigation/leave';
 import { useTheme } from '../../../src/theme/theme-context';
 
 export default function ManageItemsScreen() {
@@ -39,7 +41,7 @@ export default function ManageItemsScreen() {
   }
 
   return (
-    <ScreenWrapper showBackButton padded={false}>
+    <ScreenWrapper padded={false}>
       <View className="flex-1">
         <View className="px-4 pb-3 pt-4">
           <Text className="text-title font-semibold text-ink">{t('catalog.title')}</Text>
@@ -55,13 +57,6 @@ export default function ManageItemsScreen() {
               className="h-11 min-w-0 flex-1 py-0 text-base text-ink"
             />
           </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => router.push('/menu/item')}
-            className="mt-3 h-12 items-center justify-center rounded-lg bg-accent"
-          >
-            <Text className="text-base font-semibold text-accent-ink">{t('catalog.add')}</Text>
-          </Pressable>
           {errorCode ? <Text className="mt-3 text-sm text-danger">{t(`catalog.errors.${errorCode}`)}</Text> : null}
         </View>
 
@@ -88,6 +83,11 @@ export default function ManageItemsScreen() {
           />
         )}
       </View>
+      <ActionRow
+        pinned
+        leading={{ label: t('common.cancel'), onPress: () => leaveScreen('/menu') }}
+        trailing={{ label: t('catalog.add'), onPress: () => router.push('/menu/item'), tone: 'accent' }}
+      />
     </ScreenWrapper>
   );
 }
@@ -109,7 +109,7 @@ function ItemRow({ item, language }: { item: StockItem; language: string }) {
           {name}
         </Text>
         <Text className="mt-0.5 text-[13px] text-muted" numberOfLines={1}>
-          {item.itemCode} · {t(volume.key, volume.values)}
+          #{item.serialNo} · {item.itemCode} · {t(volume.key, volume.values)}
         </Text>
       </View>
       <Ionicons name="chevron-forward" size={18} color={palette.muted} />

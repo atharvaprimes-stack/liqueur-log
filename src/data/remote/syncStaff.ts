@@ -1,7 +1,8 @@
 import type { StaffRecord } from '../../domain/usecases/ManageStaffUseCase';
+import { newId } from '../../security/id';
+import { getSessionCredentials } from '../../security/sessionCredentials';
 import { getDatabase } from '../local/database';
 import { isDeviceOnline } from '../network';
-import { getSessionCredentials } from '../../security/sessionCredentials';
 import { getSupabase, isSupabaseConfigured } from './supabaseClient';
 
 type QueueRow = {
@@ -14,24 +15,14 @@ type SyncResponse = {
   reason?: string;
 };
 
-let flushing: Promise<void> | null = null;
-
 export async function enqueueStaffSync(record: StaffRecord): Promise<void> {
   const database = await getDatabase();
+  await database.runAsync('DELETE FROM sync_queue WHERE entity = ? AND entity_id = ?', ['users', record.id]);
   await database.runAsync(
     `INSERT INTO sync_queue (id, entity, entity_id, operation, payload, created_at)
      VALUES (?, 'users', ?, 'upsert', ?, ?)`,
-    [crypto.randomUUID(), record.id, JSON.stringify(record), Date.now()],
+    [newId(), record.id, JSON.stringify(record), Date.now()],
   );
-}
-
-export function flushSyncQueue(): Promise<void> {
-  if (!flushing) {
-    flushing = runFlush().finally(() => {
-      flushing = null;
-    });
-  }
-  return flushing;
 }
 
 export async function hasPendingUserSync(userId: string): Promise<boolean> {
@@ -43,16 +34,8 @@ export async function hasPendingUserSync(userId: string): Promise<boolean> {
   return Boolean(row);
 }
 
-async function runFlush(): Promise<void> {
-  for (;;) {
-    const finishedBatch = await flushOnce();
-    if (!finishedBatch) {
-      return;
-    }
-  }
-}
-
-async function flushOnce(): Promise<boolean> {
+/** Pushes queued staff rows. Returns false when the request itself failed. */
+export async function pushPendingUsers(): Promise<boolean> {
   const credentials = getSessionCredentials();
   if (!credentials || !isSupabaseConfigured() || !(await isDeviceOnline())) {
     return false;
@@ -67,9 +50,8 @@ async function flushOnce(): Promise<boolean> {
   const rows = await database.getAllAsync<QueueRow>(
     `SELECT id, payload FROM sync_queue WHERE entity = 'users' ORDER BY created_at ASC`,
   );
-
   if (rows.length === 0) {
-    return false;
+    return true;
   }
 
   for (const row of rows) {
@@ -99,6 +81,10 @@ async function flushOnce(): Promise<boolean> {
     }
 
     await database.runAsync('DELETE FROM sync_queue WHERE id = ?', [row.id]);
+    await database.runAsync(
+      'INSERT INTO sync_acks (entity, entity_id) VALUES (?, ?) ON CONFLICT(entity, entity_id) DO NOTHING',
+      ['users', record.id],
+    );
   }
 
   return true;

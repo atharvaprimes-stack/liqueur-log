@@ -1,9 +1,11 @@
 import { useState, type ReactNode } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { Redirect, router } from 'expo-router';
+import { KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, View } from 'react-native';
+import { Redirect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
+import { SaveRow } from '../../../src/components/FormActions';
+import { leaveScreen } from '../../../src/navigation/leave';
 import { useAuth } from '../../../src/context/AuthContext';
 import { ProfileError } from '../../../src/domain/errors';
 import { useTheme } from '../../../src/theme/theme-context';
@@ -38,7 +40,7 @@ export default function AccountScreen() {
     setErrorCode(null);
     try {
       await updateAccount({ name, currentMpin, newMpin });
-      router.back();
+      leaveScreen('/menu');
     } catch (error) {
       setErrorCode(error instanceof ProfileError ? error.code : 'unknown');
       setSaving(false);
@@ -46,7 +48,7 @@ export default function AccountScreen() {
   };
 
   return (
-    <ScreenWrapper showBackButton padded={false}>
+    <ScreenWrapper padded={false}>
       <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView className="flex-1" contentContainerClassName="px-4 pb-8" keyboardShouldPersistTaps="handled">
           <Text className="pt-4 text-title font-semibold text-ink">{t('account.title')}</Text>
@@ -99,20 +101,14 @@ export default function AccountScreen() {
           </Field>
 
           {errorCode ? <Text className="mt-4 text-sm text-danger">{t(`account.errors.${errorCode}`)}</Text> : null}
-          <Pressable
-            accessibilityRole="button"
-            disabled={saving}
-            onPress={() => {
+          <SaveRow
+            parent="/menu"
+            saveLabel={t('account.save')}
+            saving={saving}
+            onSave={() => {
               void onSave();
             }}
-            className="mt-6 h-12 items-center justify-center rounded-lg bg-accent disabled:opacity-50"
-          >
-            {saving ? (
-              <ActivityIndicator color={palette.accentInk} />
-            ) : (
-              <Text className="text-base font-semibold text-accent-ink">{t('account.save')}</Text>
-            )}
-          </Pressable>
+          />
         </ScrollView>
       </KeyboardAvoidingView>
     </ScreenWrapper>

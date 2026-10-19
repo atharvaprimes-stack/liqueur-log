@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { type Vendor } from '../domain/models/inventory';
 import { useTheme } from '../theme/theme-context';
+import { ActionRow } from './FormActions';
 
 type SupplierPickerProps = {
   visible: boolean;
@@ -21,11 +22,10 @@ export function SupplierPicker({ visible, vendors, selectedId, onClose, onSelect
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={themeStyle} className="flex-1 bg-canvas">
         <SafeAreaView className="flex-1">
-          <View className="flex-row items-center justify-between px-4 py-3">
-            <Text className="text-title font-semibold text-ink">{t('stock.purchase.supplier')}</Text>
-            <Pressable accessibilityRole="button" onPress={onClose} className="h-11 justify-center px-1">
-              <Text className="text-base font-semibold text-accent">{t('stock.purchase.cancel')}</Text>
-            </Pressable>
+          <View className="px-4 py-3">
+            <Text className="text-lg font-semibold text-ink" numberOfLines={1}>
+              {t('stock.purchase.supplier')}
+            </Text>
           </View>
           <FlatList
             data={vendors}
@@ -54,6 +54,7 @@ export function SupplierPicker({ visible, vendors, selectedId, onClose, onSelect
               <Text className="pt-8 text-center text-base text-muted">{t('stock.purchase.noVendors')}</Text>
             }
           />
+          <ActionRow pinned leading={{ label: t('common.cancel'), onPress: onClose }} />
         </SafeAreaView>
       </View>
     </Modal>

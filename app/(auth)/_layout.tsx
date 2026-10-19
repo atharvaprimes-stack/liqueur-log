@@ -4,10 +4,14 @@ import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { useAuth } from '../../src/context/AuthContext';
 
 export default function AuthLayout() {
-  const { currentUser, isReady } = useAuth();
+  const { currentUser, isReady, databaseError } = useAuth();
 
   if (!isReady) {
     return <LoadingScreen />;
+  }
+
+  if (databaseError) {
+    return <Redirect href="/" />;
   }
 
   if (currentUser) {

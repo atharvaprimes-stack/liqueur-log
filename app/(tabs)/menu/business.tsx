@@ -1,9 +1,11 @@
 import { useState, type ReactNode } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { Redirect, router } from 'expo-router';
+import { KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, View } from 'react-native';
+import { Redirect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
+import { SaveRow } from '../../../src/components/FormActions';
+import { leaveScreen } from '../../../src/navigation/leave';
 import { useAuth } from '../../../src/context/AuthContext';
 import { ProfileError } from '../../../src/domain/errors';
 import { useTheme } from '../../../src/theme/theme-context';
@@ -36,7 +38,7 @@ export default function BusinessScreen() {
     setErrorCode(null);
     try {
       await updateTenant({ businessName, address, currentMpin });
-      router.back();
+      leaveScreen('/menu');
     } catch (error) {
       setErrorCode(error instanceof ProfileError ? error.code : 'unknown');
       setSaving(false);
@@ -44,7 +46,7 @@ export default function BusinessScreen() {
   };
 
   return (
-    <ScreenWrapper showBackButton padded={false}>
+    <ScreenWrapper padded={false}>
       <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView className="flex-1" contentContainerClassName="px-4 pb-8" keyboardShouldPersistTaps="handled">
           <Text className="pt-4 text-title font-semibold text-ink">{t('business.title')}</Text>
@@ -91,20 +93,14 @@ export default function BusinessScreen() {
           </Field>
 
           {errorCode ? <Text className="mt-4 text-sm text-danger">{t(`business.errors.${errorCode}`)}</Text> : null}
-          <Pressable
-            accessibilityRole="button"
-            disabled={saving}
-            onPress={() => {
+          <SaveRow
+            parent="/menu"
+            saveLabel={t('business.save')}
+            saving={saving}
+            onSave={() => {
               void onSave();
             }}
-            className="mt-6 h-12 items-center justify-center rounded-lg bg-accent disabled:opacity-50"
-          >
-            {saving ? (
-              <ActivityIndicator color={palette.accentInk} />
-            ) : (
-              <Text className="text-base font-semibold text-accent-ink">{t('business.save')}</Text>
-            )}
-          </Pressable>
+          />
         </ScrollView>
       </KeyboardAvoidingView>
     </ScreenWrapper>

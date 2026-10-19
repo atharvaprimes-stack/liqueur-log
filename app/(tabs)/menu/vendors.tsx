@@ -10,14 +10,16 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Redirect } from 'expo-router';
+import { Redirect, useLocalSearchParams } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
+import { ActionRow } from '../../../src/components/FormActions';
 import { useAuth } from '../../../src/context/AuthContext';
 import { inventoryErrorCode } from '../../../src/domain/errors';
 import { type Vendor } from '../../../src/domain/models/inventory';
 import { useCatalog } from '../../../src/hooks/useCatalog';
+import { leaveScreen } from '../../../src/navigation/leave';
 import { useTheme } from '../../../src/theme/theme-context';
 
 type EditorState = { mode: 'create' } | { mode: 'edit'; vendor: Vendor } | null;
@@ -25,6 +27,9 @@ type EditorState = { mode: 'create' } | { mode: 'edit'; vendor: Vendor } | null;
 export default function ManageVendorsScreen() {
   const { t } = useTranslation();
   const { palette, themeStyle } = useTheme();
+  const params = useLocalSearchParams<{ returnTo?: string | string[] }>();
+  const requestedParent = Array.isArray(params.returnTo) ? params.returnTo[0] : params.returnTo;
+  const parent = requestedParent === '/stock/purchase' ? '/stock/purchase' : '/menu';
   const { currentUser, isReady } = useAuth();
   const { vendors, isLoading, errorCode, isAdmin, saveVendor, removeVendor } = useCatalog();
   const [query, setQuery] = useState('');
@@ -102,7 +107,7 @@ export default function ManageVendorsScreen() {
   };
 
   return (
-    <ScreenWrapper showBackButton padded={false}>
+    <ScreenWrapper padded={false}>
       <View className="flex-1">
         <View className="px-4 pb-3 pt-4">
           <Text className="text-title font-semibold text-ink">{t('vendors.title')}</Text>
@@ -117,13 +122,6 @@ export default function ManageVendorsScreen() {
               className="h-11 min-w-0 flex-1 py-0 text-base text-ink"
             />
           </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={openCreate}
-            className="mt-3 h-12 items-center justify-center rounded-lg bg-accent"
-          >
-            <Text className="text-base font-semibold text-accent-ink">{t('vendors.add')}</Text>
-          </Pressable>
           {errorCode ? <Text className="mt-3 text-sm text-danger">{t(`vendors.errors.${errorCode}`)}</Text> : null}
         </View>
 
@@ -151,6 +149,11 @@ export default function ManageVendorsScreen() {
           </ScrollView>
         )}
       </View>
+      <ActionRow
+        pinned
+        leading={{ label: t('common.cancel'), onPress: () => leaveScreen(parent) }}
+        trailing={{ label: t('vendors.add'), onPress: openCreate, tone: 'accent' }}
+      />
 
       <Modal visible={editor !== null} transparent animationType="slide" onRequestClose={() => !saving && setEditor(null)}>
         <KeyboardAvoidingView
@@ -211,20 +214,30 @@ export default function ManageVendorsScreen() {
                   className="h-12 rounded-lg border border-line bg-canvas px-4 text-base text-ink"
                 />
                 {formError ? <Text className="mt-3 text-sm text-danger">{t(`vendors.errors.${formError}`)}</Text> : null}
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={saving}
-                  onPress={() => {
-                    void onSave();
-                  }}
-                  className="mt-5 h-12 items-center justify-center rounded-lg bg-accent disabled:opacity-50"
-                >
-                  {saving ? (
-                    <ActivityIndicator color={palette.accentInk} />
-                  ) : (
-                    <Text className="text-base font-semibold text-accent-ink">{t('vendors.save')}</Text>
-                  )}
-                </Pressable>
+                <View className="mt-5 flex-row gap-3">
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={saving}
+                    onPress={() => setEditor(null)}
+                    className="h-12 flex-1 items-center justify-center rounded-lg border border-line bg-canvas disabled:opacity-50"
+                  >
+                    <Text className="text-base font-semibold text-ink">{t('vendors.cancel')}</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={saving}
+                    onPress={() => {
+                      void onSave();
+                    }}
+                    className="h-12 flex-1 items-center justify-center rounded-lg bg-accent disabled:opacity-50"
+                  >
+                    {saving ? (
+                      <ActivityIndicator color={palette.accentInk} />
+                    ) : (
+                      <Text className="text-base font-semibold text-accent-ink">{t('vendors.save')}</Text>
+                    )}
+                  </Pressable>
+                </View>
                 {editor?.mode === 'edit' ? (
                   <Pressable
                     accessibilityRole="button"

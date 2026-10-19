@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { AppState, View } from 'react-native';
 import { router } from 'expo-router';
 
+import { initDatabase } from '../data/local/database';
 import {
   authenticate,
   clearSession,
@@ -11,7 +12,7 @@ import {
   updateOwnTenant,
   updateTableCount as saveTableCount,
 } from '../data/repositories/authRepository';
-import { flushSyncQueue } from '../data/remote/syncStaff';
+import { syncNow } from '../data/sync/engine';
 import type { Tenant, User } from '../domain/models/auth';
 import { getSessionInteractionAt, setSessionInteractionAt } from '../security/sessionCredentials';
 import { AuthContext, useAuth } from './auth-context';
@@ -27,28 +28,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [currentTenant, setCurrentTenant] = useState<Tenant | null>(null);
   const [isReady, setIsReady] = useState(false);
+  const [databaseError, setDatabaseError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    restoreSession()
-      .then((session) => {
+
+    async function bootstrap() {
+      try {
+        // Native APK: wait for SQLite open + schema before any UI query.
+        await initDatabase();
         if (cancelled) {
           return;
         }
+
+        const session = await restoreSession();
+        if (cancelled) {
+          return;
+        }
+        setDatabaseError(null);
         setCurrentUser(session?.user ?? null);
         setCurrentTenant(session?.tenant ?? null);
-      })
-      .catch(() => {
+      } catch (error) {
+        console.error('[auth] startup failed', error);
         if (!cancelled) {
           setCurrentUser(null);
           setCurrentTenant(null);
+          setDatabaseError(error instanceof Error ? error.message : 'Local database failed to start.');
         }
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) {
           setIsReady(true);
         }
-      });
+      }
+    }
+
+    void bootstrap();
 
     return () => {
       cancelled = true;
@@ -57,12 +71,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (mobileNumber: string, mpin: string) => {
     const session = await authenticate(mobileNumber, mpin);
-    if (session.user.role === 'ADMIN') {
-      void flushSyncQueue();
-    }
     setCurrentUser(session.user);
     setCurrentTenant(session.tenant);
   }, []);
+
+  useEffect(() => {
+    if (!currentUser) {
+      return;
+    }
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void syncNow();
+      }
+    });
+    return () => subscription.remove();
+  }, [currentUser]);
 
   const logout = useCallback(async () => {
     await clearSession();
@@ -105,7 +128,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ currentUser, currentTenant, isReady, login, logout, updateAccount, updateTenant, updateTableCount }}
+      value={{
+        currentUser,
+        currentTenant,
+        isReady,
+        databaseError,
+        login,
+        logout,
+        updateAccount,
+        updateTenant,
+        updateTableCount,
+      }}
     >
       {children}
     </AuthContext.Provider>

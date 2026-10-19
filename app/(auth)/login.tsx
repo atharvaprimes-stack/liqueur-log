@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -20,8 +21,9 @@ import { useTheme } from '../../src/theme/theme-context';
 
 export default function LoginScreen() {
   const { t } = useTranslation();
-  const { height } = useWindowDimensions();
+  const { height, width } = useWindowDimensions();
   const { palette } = useTheme();
+  const bannerHeight = Math.max(width * (338 / 1024), height * 0.28);
   const { currentUser, isReady, login } = useAuth();
   const pinRef = useRef<TextInput>(null);
   const [mobileNumber, setMobileNumber] = useState('');
@@ -56,18 +58,23 @@ export default function LoginScreen() {
   };
 
   return (
-    <ScreenWrapper padded={false}>
+    <ScreenWrapper padded={false} header={false}>
       <KeyboardAvoidingView
         className="flex-1"
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView
           className="flex-1"
-          contentContainerClassName="grow px-6 pb-8"
-          contentContainerStyle={{ paddingTop: height * 0.2 }}
+          contentContainerClassName="grow pb-8"
           keyboardShouldPersistTaps="handled"
         >
-          <View className="w-full max-w-[440px] self-center">
+          <Image
+            accessibilityLabel={t('appName')}
+            source={require('../../assets/login-banner.jpg')}
+            resizeMode="stretch"
+            style={{ width: '100%', height: bannerHeight }}
+          />
+          <View className="w-full max-w-[440px] self-center px-6 pt-8">
             <Text className="text-center text-display font-medium text-ink">{t('login.title')}</Text>
 
             <Text className="mb-2 mt-8 text-sm font-medium text-muted">{t('login.mobileLabel')}</Text>

@@ -15,6 +15,7 @@ module.exports = {
         'accent-ink': 'rgb(var(--color-accent-ink) / <alpha-value>)',
         danger: 'rgb(var(--color-danger) / <alpha-value>)',
         success: 'rgb(var(--color-success) / <alpha-value>)',
+        idle: 'rgb(var(--color-idle) / <alpha-value>)',
       },
       fontSize: {
         body: ['16px', { lineHeight: '22px' }],

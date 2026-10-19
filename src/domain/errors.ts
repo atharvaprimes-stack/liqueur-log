@@ -58,6 +58,7 @@ export const INVENTORY_ERROR_CODES = [
   'lines',
   'quantity',
   'price',
+  'amount-paid',
   'duplicate-invoice',
   'unknown-item',
   'stock',
@@ -104,6 +105,41 @@ export class InventoryValidationError extends Error {
 export function inventoryErrorCode(error: unknown): InventoryErrorCode {
   if (error instanceof InventoryValidationError || error instanceof InventoryAccessError) {
     return error.code;
+  }
+  return 'unknown';
+}
+
+export const ORDER_ERROR_CODES = [
+  'closed',
+  'empty',
+  'stock',
+  'unknown-item',
+  'code',
+  'quantity',
+  'payment',
+  'amount',
+  'table',
+  'unknown',
+] as const;
+
+export type OrderErrorCode = (typeof ORDER_ERROR_CODES)[number];
+
+export class OrderValidationError extends Error {
+  readonly code: OrderErrorCode;
+
+  constructor(code: OrderErrorCode) {
+    super(code);
+    this.name = 'OrderValidationError';
+    this.code = code;
+  }
+}
+
+export function orderErrorCode(error: unknown): OrderErrorCode {
+  if (error instanceof OrderValidationError) {
+    return error.code;
+  }
+  if (error instanceof Error && error.message.includes('closed orders are read-only')) {
+    return 'closed';
   }
   return 'unknown';
 }

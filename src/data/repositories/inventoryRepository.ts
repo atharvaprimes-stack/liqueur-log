@@ -3,11 +3,10 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { InventoryAccessError, InventoryValidationError } from '../../domain/errors';
 import {
   buildPurchaseRecord,
-  DEFAULT_ITEM_STRENGTHS,
-  DEFAULT_ITEM_TYPES,
   parseCatalogItem,
   parseCatalogTerm,
   parseVendor,
+  resolveServiceStation,
   type CatalogItemInput,
   type CatalogTerm,
   type PurchaseFormInput,
@@ -15,18 +14,22 @@ import {
   type Vendor,
   type VendorInput,
 } from '../../domain/models/inventory';
+import { newId } from '../../security/id';
 import { isUniqueConstraintError, withDatabase, withLockedTransaction } from '../local/database';
-import { STARTER_CATALOG } from '../local/starterCatalog';
+import { requestSync, syncNow } from '../sync/engine';
+import { enqueueDelete, enqueueUpsert, recordAdjustment } from '../sync/outbox';
 
 type ItemRow = {
   id: string;
   tenant_id: string;
+  serial_no: number;
   item_code: string;
   name_en: string;
   name_mr: string;
   brand: string;
   liquor_type: string;
   sub_type: string;
+  service_station: string;
   volume_ml: number;
   purchase_price: number;
   selling_price: number;
@@ -34,11 +37,10 @@ type ItemRow = {
   low_stock_threshold: number;
 };
 
-const ITEM_COLUMNS = `id, tenant_id, item_code, name_en, name_mr, brand, liquor_type, sub_type,
-  volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold`;
+const ITEM_COLUMNS = `id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
+  service_station, volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold`;
 
 export async function listStock(tenantId: string): Promise<StockItem[]> {
-  await ensureStarterCatalog(tenantId);
   return withDatabase(async (database) => {
     const rows = await database.getAllAsync<ItemRow>(
       `SELECT ${ITEM_COLUMNS}
@@ -90,7 +92,7 @@ export async function adjustItemStock(input: {
       throw new InventoryValidationError('unknown-item');
     }
 
-    await insertActivity(database, {
+    const activityId = await insertActivity(database, {
       tenantId: input.tenantId,
       actorId: input.actorId,
       action: 'stock.adjust',
@@ -102,8 +104,16 @@ export async function adjustItemStock(input: {
         currentStock: item.currentStock,
       },
     });
+    await recordAdjustment(database, {
+      id: activityId,
+      tenantId: input.tenantId,
+      itemId: item.id,
+      delta: input.delta,
+      createdAt: Date.now(),
+    });
     updated = item;
   });
+  requestSync();
 
   if (!updated) {
     throw new InventoryValidationError('unknown');
@@ -156,7 +166,7 @@ export async function correctItemStock(input: {
       throw new InventoryValidationError('unknown-item');
     }
 
-    await insertActivity(database, {
+    const activityId = await insertActivity(database, {
       tenantId: input.tenantId,
       actorId: input.actorId,
       action: 'stock.adjust',
@@ -169,8 +179,16 @@ export async function correctItemStock(input: {
         currentStock: item.currentStock,
       },
     });
+    await recordAdjustment(database, {
+      id: activityId,
+      tenantId: input.tenantId,
+      itemId: item.id,
+      delta: input.nextStock - current.currentStock,
+      createdAt: Date.now(),
+    });
     updated = item;
   });
+  requestSync();
 
   if (!updated) {
     throw new InventoryValidationError('unknown');
@@ -221,7 +239,7 @@ export async function recordPurchase(
         }
       }
 
-      const purchaseId = crypto.randomUUID();
+      const purchaseId = newId();
       const purchasedAt = Date.now();
       await database.runAsync(
         `INSERT INTO purchases (
@@ -247,15 +265,16 @@ export async function recordPurchase(
           `INSERT INTO purchase_items (
              id, purchase_id, item_id, quantity_received, unit_purchase_price
            ) VALUES (?, ?, ?, ?, ?)`,
-          [crypto.randomUUID(), purchaseId, line.itemId, line.quantityReceived, unitRupees],
+          [newId(), purchaseId, line.itemId, line.quantityReceived, unitRupees],
         );
 
         const updated = await database.runAsync(
           `UPDATE items
            SET current_stock = current_stock + ?,
-               purchase_price = ?
+               purchase_price = ?,
+               updated_at = ?
            WHERE id = ? AND tenant_id = ?`,
-          [line.quantityReceived, unitRupees, line.itemId, tenantId],
+          [line.quantityReceived, unitRupees, purchasedAt, line.itemId, tenantId],
         );
         if (updated.changes !== 1) {
           throw new InventoryValidationError('unknown-item');
@@ -277,7 +296,12 @@ export async function recordPurchase(
           lineCount: draft.lines.length,
         },
       });
+      await enqueueUpsert(database, 'purchases', purchaseId);
+      for (const line of draft.lines) {
+        await enqueueUpsert(database, 'items', line.itemId);
+      }
     });
+    void syncNow();
   } catch (error) {
     if (error instanceof InventoryValidationError || error instanceof InventoryAccessError) {
       throw error;
@@ -322,7 +346,6 @@ export async function listCatalogTerms(tenantId: string, kind: CatalogTermKind):
     if (!tenant) {
       return [];
     }
-    await seedCatalogTerms(database, tenantId);
     return readCatalogTerms(database, tenantId, kind);
   });
 }
@@ -338,7 +361,6 @@ export async function saveCatalogTerm(input: {
   try {
     await withLockedTransaction(async (database) => {
       await assertAdmin(database, input.tenantId, input.actorId);
-      await seedCatalogTerms(database, input.tenantId);
       const table = termTable(input.kind);
       const column = termColumn(input.kind);
       if (input.termId) {
@@ -349,18 +371,27 @@ export async function saveCatalogTerm(input: {
         if (!current) {
           throw new InventoryValidationError('unknown');
         }
+        const now = Date.now();
         if (current.name !== name) {
-          await database.runAsync(`UPDATE ${table} SET name = ? WHERE id = ? AND tenant_id = ?`, [
+          await database.runAsync(`UPDATE ${table} SET name = ?, updated_at = ? WHERE id = ? AND tenant_id = ?`, [
             name,
+            now,
             input.termId,
             input.tenantId,
           ]);
-          await database.runAsync(`UPDATE items SET ${column} = ? WHERE tenant_id = ? AND ${column} = ?`, [
-            name,
-            input.tenantId,
-            current.name,
-          ]);
+          await database.runAsync(
+            `UPDATE items SET ${column} = ?, updated_at = ? WHERE tenant_id = ? AND ${column} = ?`,
+            [name, now, input.tenantId, current.name],
+          );
+          const affected = await database.getAllAsync<{ id: string }>(
+            `SELECT id FROM items WHERE tenant_id = ? AND ${column} = ?`,
+            [input.tenantId, name],
+          );
+          for (const item of affected) {
+            await enqueueUpsert(database, 'items', item.id);
+          }
         }
+        await enqueueUpsert(database, table, input.termId);
         await insertActivity(database, {
           tenantId: input.tenantId,
           actorId: input.actorId,
@@ -376,13 +407,12 @@ export async function saveCatalogTerm(input: {
         `SELECT sort_order FROM ${table} WHERE tenant_id = ? ORDER BY sort_order DESC LIMIT 1`,
         [input.tenantId],
       );
-      const termId = crypto.randomUUID();
-      await database.runAsync(`INSERT INTO ${table} (id, tenant_id, name, sort_order) VALUES (?, ?, ?, ?)`, [
-        termId,
-        input.tenantId,
-        name,
-        (last?.sort_order ?? -1) + 1,
-      ]);
+      const termId = newId();
+      await database.runAsync(
+        `INSERT INTO ${table} (id, tenant_id, name, sort_order, updated_at) VALUES (?, ?, ?, ?, ?)`,
+        [termId, input.tenantId, name, (last?.sort_order ?? -1) + 1, Date.now()],
+      );
+      await enqueueUpsert(database, table, termId);
       await insertActivity(database, {
         tenantId: input.tenantId,
         actorId: input.actorId,
@@ -392,6 +422,7 @@ export async function saveCatalogTerm(input: {
         detail: { name },
       });
     });
+    requestSync();
   } catch (error) {
     throw mapTermWriteError(error);
   }
@@ -422,6 +453,7 @@ export async function deleteCatalogTerm(input: {
       throw new InventoryValidationError('label-in-use');
     }
     await database.runAsync(`DELETE FROM ${table} WHERE id = ? AND tenant_id = ?`, [input.termId, input.tenantId]);
+    await enqueueDelete(database, table, input.termId);
     await insertActivity(database, {
       tenantId: input.tenantId,
       actorId: input.actorId,
@@ -431,6 +463,7 @@ export async function deleteCatalogTerm(input: {
       detail: { name: current.name },
     });
   });
+  requestSync();
 }
 
 export async function createCatalogItem(input: {
@@ -442,30 +475,39 @@ export async function createCatalogItem(input: {
   try {
     await withLockedTransaction(async (database) => {
       await assertAdmin(database, input.tenantId, input.actorId);
-      await seedCatalogTerms(database, input.tenantId);
       const liquorType = await canonicalTerm(database, input.tenantId, 'type', draft.liquorType);
       const subType = await canonicalTerm(database, input.tenantId, 'strength', draft.subType);
-      const itemId = crypto.randomUUID();
+      const itemId = newId();
+      const now = Date.now();
+      const maxSerial = await database.getFirstAsync<{ serial_no: number }>(
+        'SELECT COALESCE(MAX(serial_no), 0) AS serial_no FROM items WHERE tenant_id = ?',
+        [input.tenantId],
+      );
+      const serialNo = (maxSerial?.serial_no ?? 0) + 1;
       await database.runAsync(
         `INSERT INTO items (
-           id, tenant_id, item_code, name_en, name_mr, brand, liquor_type, sub_type,
-           volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+           id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
+           service_station, volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
         [
           itemId,
           input.tenantId,
+          serialNo,
           draft.itemCode,
           draft.nameEn,
           draft.nameMr,
           draft.brand,
           liquorType,
           subType,
+          draft.serviceStation,
           draft.volumeMl,
           draft.purchasePrice,
           draft.sellingPrice,
           draft.lowStockThreshold,
+          now,
         ],
       );
+      await enqueueUpsert(database, 'items', itemId);
       await insertActivity(database, {
         tenantId: input.tenantId,
         actorId: input.actorId,
@@ -475,6 +517,7 @@ export async function createCatalogItem(input: {
         detail: { itemCode: draft.itemCode },
       });
     });
+    requestSync();
   } catch (error) {
     throw mapCatalogWriteError(error);
   }
@@ -490,13 +533,13 @@ export async function updateCatalogItem(input: {
   try {
     await withLockedTransaction(async (database) => {
       await assertAdmin(database, input.tenantId, input.actorId);
-      await seedCatalogTerms(database, input.tenantId);
       const liquorType = await canonicalTerm(database, input.tenantId, 'type', draft.liquorType);
       const subType = await canonicalTerm(database, input.tenantId, 'strength', draft.subType);
       const updated = await database.runAsync(
         `UPDATE items
          SET item_code = ?, name_en = ?, name_mr = ?, brand = ?, liquor_type = ?, sub_type = ?,
-             volume_ml = ?, purchase_price = ?, selling_price = ?, low_stock_threshold = ?
+             service_station = ?, volume_ml = ?, purchase_price = ?, selling_price = ?,
+             low_stock_threshold = ?, updated_at = ?
          WHERE id = ? AND tenant_id = ?`,
         [
           draft.itemCode,
@@ -505,10 +548,12 @@ export async function updateCatalogItem(input: {
           draft.brand,
           liquorType,
           subType,
+          draft.serviceStation,
           draft.volumeMl,
           draft.purchasePrice,
           draft.sellingPrice,
           draft.lowStockThreshold,
+          Date.now(),
           input.itemId,
           input.tenantId,
         ],
@@ -524,7 +569,9 @@ export async function updateCatalogItem(input: {
         entityId: input.itemId,
         detail: { itemCode: draft.itemCode },
       });
+      await enqueueUpsert(database, 'items', input.itemId);
     });
+    requestSync();
   } catch (error) {
     throw mapCatalogWriteError(error);
   }
@@ -548,13 +595,17 @@ export async function deleteCatalogItem(input: {
       throw new InventoryValidationError('has-stock');
     }
     const used = await database.getFirstAsync<{ id: string }>(
-      'SELECT id FROM purchase_items WHERE item_id = ? LIMIT 1',
-      [input.itemId],
+      `SELECT id FROM purchase_items WHERE item_id = ?
+       UNION ALL
+       SELECT id FROM order_items WHERE item_id = ?
+       LIMIT 1`,
+      [input.itemId, input.itemId],
     );
     if (used) {
       throw new InventoryValidationError('in-use');
     }
     await database.runAsync('DELETE FROM items WHERE id = ? AND tenant_id = ?', [input.itemId, input.tenantId]);
+    await enqueueDelete(database, 'items', input.itemId);
     await insertActivity(database, {
       tenantId: input.tenantId,
       actorId: input.actorId,
@@ -564,6 +615,7 @@ export async function deleteCatalogItem(input: {
       detail: { itemCode: item.item_code },
     });
   });
+  requestSync();
 }
 
 export async function createVendor(input: {
@@ -575,11 +627,12 @@ export async function createVendor(input: {
   try {
     await withLockedTransaction(async (database) => {
       await assertAdmin(database, input.tenantId, input.actorId);
-      const vendorId = crypto.randomUUID();
+      const vendorId = newId();
       await database.runAsync(
-        'INSERT INTO vendors (id, tenant_id, name, phone) VALUES (?, ?, ?, ?)',
-        [vendorId, input.tenantId, draft.name, draft.phone],
+        'INSERT INTO vendors (id, tenant_id, name, phone, updated_at) VALUES (?, ?, ?, ?, ?)',
+        [vendorId, input.tenantId, draft.name, draft.phone, Date.now()],
       );
+      await enqueueUpsert(database, 'vendors', vendorId);
       await insertActivity(database, {
         tenantId: input.tenantId,
         actorId: input.actorId,
@@ -589,6 +642,7 @@ export async function createVendor(input: {
         detail: { name: draft.name },
       });
     });
+    requestSync();
   } catch (error) {
     throw mapVendorWriteError(error);
   }
@@ -605,12 +659,13 @@ export async function updateVendor(input: {
     await withLockedTransaction(async (database) => {
       await assertAdmin(database, input.tenantId, input.actorId);
       const updated = await database.runAsync(
-        'UPDATE vendors SET name = ?, phone = ? WHERE id = ? AND tenant_id = ?',
-        [draft.name, draft.phone, input.vendorId, input.tenantId],
+        'UPDATE vendors SET name = ?, phone = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+        [draft.name, draft.phone, Date.now(), input.vendorId, input.tenantId],
       );
       if (updated.changes !== 1) {
         throw new InventoryValidationError('unknown');
       }
+      await enqueueUpsert(database, 'vendors', input.vendorId);
       await insertActivity(database, {
         tenantId: input.tenantId,
         actorId: input.actorId,
@@ -620,6 +675,7 @@ export async function updateVendor(input: {
         detail: { name: draft.name },
       });
     });
+    requestSync();
   } catch (error) {
     throw mapVendorWriteError(error);
   }
@@ -639,6 +695,7 @@ export async function deleteVendor(input: { tenantId: string; actorId: string; v
       input.vendorId,
       input.tenantId,
     ]);
+    await enqueueDelete(database, 'vendors', input.vendorId);
     await insertActivity(database, {
       tenantId: input.tenantId,
       actorId: input.actorId,
@@ -648,6 +705,7 @@ export async function deleteVendor(input: { tenantId: string; actorId: string; v
       detail: { name: vendor.name },
     });
   });
+  requestSync();
 }
 
 function mapCatalogWriteError(error: unknown): Error {
@@ -676,34 +734,6 @@ function termTable(kind: CatalogTermKind): 'item_types' | 'item_strengths' {
 
 function termColumn(kind: CatalogTermKind): 'liquor_type' | 'sub_type' {
   return kind === 'type' ? 'liquor_type' : 'sub_type';
-}
-
-async function seedCatalogTerms(database: SQLiteDatabase, tenantId: string): Promise<void> {
-  await seedTermList(database, tenantId, 'item_types', DEFAULT_ITEM_TYPES);
-  await seedTermList(database, tenantId, 'item_strengths', DEFAULT_ITEM_STRENGTHS);
-}
-
-async function seedTermList(
-  database: SQLiteDatabase,
-  tenantId: string,
-  table: 'item_types' | 'item_strengths',
-  names: readonly string[],
-): Promise<void> {
-  const existing = await database.getFirstAsync<{ total: number }>(
-    `SELECT COUNT(*) AS total FROM ${table} WHERE tenant_id = ?`,
-    [tenantId],
-  );
-  if ((existing?.total ?? 0) > 0) {
-    return;
-  }
-  for (const [index, name] of names.entries()) {
-    await database.runAsync(`INSERT INTO ${table} (id, tenant_id, name, sort_order) VALUES (?, ?, ?, ?)`, [
-      crypto.randomUUID(),
-      tenantId,
-      name,
-      index,
-    ]);
-  }
 }
 
 async function readCatalogTerms(
@@ -751,55 +781,6 @@ function mapVendorWriteError(error: unknown): Error {
   return error instanceof Error ? error : new InventoryValidationError('unknown');
 }
 
-async function ensureStarterCatalog(tenantId: string): Promise<void> {
-  await withLockedTransaction(async (database) => {
-    const tenant = await database.getFirstAsync<{ id: string }>('SELECT id FROM tenants WHERE id = ?', [tenantId]);
-    if (!tenant) {
-      return;
-    }
-    await seedCatalogTerms(database, tenantId);
-
-    const seedKey = `catalog-seeded:${tenantId}`;
-    const seeded = await database.getFirstAsync<{ key: string }>('SELECT key FROM preferences WHERE key = ?', [seedKey]);
-    if (seeded) {
-      return;
-    }
-
-    const existing = await database.getFirstAsync<{ total: number }>(
-      'SELECT COUNT(*) AS total FROM items WHERE tenant_id = ?',
-      [tenantId],
-    );
-    if ((existing?.total ?? 0) > 0) {
-      await database.runAsync('INSERT INTO preferences (key, value) VALUES (?, ?)', [seedKey, '1']);
-      return;
-    }
-
-    for (const item of STARTER_CATALOG) {
-      await database.runAsync(
-        `INSERT INTO items (
-           id, tenant_id, item_code, name_en, name_mr, brand, liquor_type, sub_type,
-           volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-        [
-          `${tenantId}:${item.itemCode}`,
-          tenantId,
-          item.itemCode,
-          item.nameEn,
-          item.nameMr,
-          item.brand,
-          item.liquorType,
-          item.subType,
-          item.volumeMl,
-          item.purchasePrice,
-          item.sellingPrice,
-          item.lowStockThreshold,
-        ],
-      );
-    }
-    await database.runAsync('INSERT INTO preferences (key, value) VALUES (?, ?)', [seedKey, '1']);
-  });
-}
-
 async function assertAdmin(
   database: SQLiteDatabase,
   tenantId: string,
@@ -824,13 +805,14 @@ async function insertActivity(
     entityId: string;
     detail: Record<string, string | number>;
   },
-): Promise<void> {
+): Promise<string> {
+  const id = newId();
   await database.runAsync(
     `INSERT INTO activity_logs (
        id, tenant_id, actor_id, action, entity, entity_id, detail, created_at
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      crypto.randomUUID(),
+      id,
       entry.tenantId,
       entry.actorId,
       entry.action,
@@ -840,6 +822,8 @@ async function insertActivity(
       Date.now(),
     ],
   );
+  await enqueueUpsert(database, 'activity_logs', id);
+  return id;
 }
 
 function mapItem(row: ItemRow): StockItem | null {
@@ -847,12 +831,15 @@ function mapItem(row: ItemRow): StockItem | null {
     return null;
   }
 
+  const serialNo = Number(row.serial_no);
   const volumeMl = Number(row.volume_ml);
   const currentStock = Number(row.current_stock);
   const lowStockThreshold = Number(row.low_stock_threshold);
   const purchasePrice = Number(row.purchase_price);
   const sellingPrice = Number(row.selling_price);
   if (
+    !Number.isInteger(serialNo) ||
+    serialNo < 0 ||
     !Number.isInteger(volumeMl) ||
     volumeMl <= 0 ||
     !Number.isInteger(currentStock) ||
@@ -870,12 +857,14 @@ function mapItem(row: ItemRow): StockItem | null {
   return {
     id: row.id,
     tenantId: row.tenant_id,
+    serialNo,
     itemCode: row.item_code,
     nameEn: row.name_en,
     nameMr: row.name_mr,
     brand: row.brand,
     liquorType: row.liquor_type,
     subType: row.sub_type,
+    serviceStation: resolveServiceStation(row.service_station, row.liquor_type),
     volumeMl,
     purchasePrice: Math.round(purchasePrice * 100) / 100,
     sellingPrice: Math.round(sellingPrice * 100) / 100,

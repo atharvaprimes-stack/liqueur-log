@@ -6,6 +6,8 @@ export type AuthContextValue = {
   currentUser: User | null;
   currentTenant: Tenant | null;
   isReady: boolean;
+  /** Set when local SQLite failed to open/migrate on startup. */
+  databaseError: string | null;
   login: (mobileNumber: string, mpin: string) => Promise<void>;
   logout: () => Promise<void>;
   updateAccount: (input: { name: string; currentMpin: string; newMpin: string }) => Promise<void>;
