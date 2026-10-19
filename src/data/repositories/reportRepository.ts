@@ -7,10 +7,10 @@ import type {
   ReportSource,
   SalesDayRow,
 } from '../../domain/reports';
-import type { StockItem } from '../../domain/models/inventory';
+import { resolveServiceStation, type StockItem } from '../../domain/models/inventory';
 
 const ITEM_COLUMNS = `id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
-  volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold`;
+  service_station, volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold`;
 
 type ItemRow = {
   id: string;
@@ -22,6 +22,7 @@ type ItemRow = {
   brand: string;
   liquor_type: string;
   sub_type: string;
+  service_station: string;
   volume_ml: number;
   purchase_price: number;
   selling_price: number;
@@ -252,6 +253,7 @@ function mapItem(row: ItemRow): StockItem | null {
     brand: row.brand,
     liquorType: row.liquor_type,
     subType: row.sub_type,
+    serviceStation: resolveServiceStation(row.service_station, row.liquor_type),
     volumeMl,
     purchasePrice: Math.round(purchasePrice * 100) / 100,
     sellingPrice: Math.round(sellingPrice * 100) / 100,

@@ -17,7 +17,13 @@ import { SaveRow } from '../../../src/components/FormActions';
 import { leaveScreen } from '../../../src/navigation/leave';
 import { useAuth } from '../../../src/context/AuthContext';
 import { inventoryErrorCode } from '../../../src/domain/errors';
-import { itemNames, knownTermLabel, type CatalogItemInput } from '../../../src/domain/models/inventory';
+import {
+  defaultServiceStation,
+  itemNames,
+  knownTermLabel,
+  type CatalogItemInput,
+  type ServiceStation,
+} from '../../../src/domain/models/inventory';
 import { formatRupeeInput, sanitizeRupeeInput } from '../../../src/domain/money';
 import { useCatalog } from '../../../src/hooks/useCatalog';
 import { useTheme } from '../../../src/theme/theme-context';
@@ -29,6 +35,7 @@ const EMPTY_FORM: CatalogItemInput = {
   brand: '',
   liquorType: 'IMFL',
   subType: 'Strong',
+  serviceStation: 'bar',
   volumeMl: '',
   purchasePrice: '',
   sellingPrice: '',
@@ -61,6 +68,7 @@ export default function ItemFormScreen() {
       brand: existing.brand,
       liquorType: existing.liquorType,
       subType: existing.subType,
+      serviceStation: existing.serviceStation,
       volumeMl: String(existing.volumeMl),
       purchasePrice: formatRupeeInput(existing.purchasePrice),
       sellingPrice: formatRupeeInput(existing.sellingPrice),
@@ -132,7 +140,7 @@ export default function ItemFormScreen() {
     }
   };
 
-  const snacks = form.liquorType === 'Snacks';
+  const kitchen = form.serviceStation === 'kitchen';
 
   return (
     <ScreenWrapper padded={false}>
@@ -196,11 +204,28 @@ export default function ItemFormScreen() {
                   key={type}
                   label={knownTermLabel('types', type, t)}
                   selected={form.liquorType === type}
-                  onPress={() => patch({ liquorType: type })}
+                  onPress={() =>
+                    patch({
+                      liquorType: type,
+                      serviceStation: defaultServiceStation(type),
+                    })
+                  }
                 />
               ))}
             </ScrollView>
           )}
+
+          <Text className="mb-2 mt-5 text-sm font-semibold text-ink">{t('catalog.station')}</Text>
+          <View className="flex-row gap-2">
+            {(['bar', 'kitchen'] as const).map((station: ServiceStation) => (
+              <ChoiceChip
+                key={station}
+                label={t(station === 'bar' ? 'billing.barItems' : 'billing.kitchenItems')}
+                selected={form.serviceStation === station}
+                onPress={() => patch({ serviceStation: station })}
+              />
+            ))}
+          </View>
 
           <Text className="mb-2 mt-5 text-sm font-semibold text-ink">{t('catalog.subType')}</Text>
           {itemStrengths.length === 0 && !isLoading ? (
@@ -218,7 +243,7 @@ export default function ItemFormScreen() {
             </ScrollView>
           )}
 
-          <Field label={t(snacks ? 'catalog.volumeSnack' : 'catalog.volume')}>
+          <Field label={t(kitchen ? 'catalog.volumeSnack' : 'catalog.volume')}>
             <TextInput
               value={form.volumeMl}
               onChangeText={(value) => patch({ volumeMl: value.replace(/\D/g, '').slice(0, 5) })}

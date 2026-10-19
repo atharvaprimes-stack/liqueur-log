@@ -5,9 +5,11 @@ export const DEFAULT_ITEM_TYPES = ['IMFL', 'Beer', 'Wine', 'Foreign', 'Country',
 export const DEFAULT_ITEM_STRENGTHS = ['Strong', 'Mild'] as const;
 export const PAYMENT_TYPES = ['Cash', 'Partial', 'Credit'] as const;
 export const STOCK_PICKER_CATEGORIES = ['all', 'liquor', 'beer', 'kitchen'] as const;
+export const SERVICE_STATIONS = ['bar', 'kitchen'] as const;
 
 export type LiquorType = string;
 export type SubType = string;
+export type ServiceStation = (typeof SERVICE_STATIONS)[number];
 
 export type CatalogTerm = {
   id: string;
@@ -28,6 +30,7 @@ export type StockItem = {
   brand: string;
   liquorType: LiquorType;
   subType: SubType;
+  serviceStation: ServiceStation;
   volumeMl: number;
   purchasePrice: number;
   sellingPrice: number;
@@ -42,6 +45,7 @@ export type CatalogItemInput = {
   brand: string;
   liquorType: string;
   subType: string;
+  serviceStation: ServiceStation;
   volumeMl: string;
   purchasePrice: string;
   sellingPrice: string;
@@ -55,6 +59,7 @@ export type CatalogItemDraft = {
   brand: string;
   liquorType: LiquorType;
   subType: SubType;
+  serviceStation: ServiceStation;
   volumeMl: number;
   purchasePrice: number;
   sellingPrice: number;
@@ -140,11 +145,35 @@ export function itemNames(item: Pick<StockItem, 'nameEn' | 'nameMr'>, language: 
   return { primary: item.nameEn, secondary: item.nameMr };
 }
 
-export function volumeMessage(item: Pick<StockItem, 'volumeMl' | 'liquorType'>): {
+export function isServiceStation(value: string): value is ServiceStation {
+  return SERVICE_STATIONS.some((station) => station === value);
+}
+
+export function defaultServiceStation(liquorType: string): ServiceStation {
+  return liquorType.trim().toLowerCase() === 'snacks' ? 'kitchen' : 'bar';
+}
+
+export function resolveServiceStation(
+  value: string | null | undefined,
+  liquorType?: string,
+): ServiceStation {
+  if (value && isServiceStation(value)) {
+    return value;
+  }
+  return defaultServiceStation(liquorType ?? '');
+}
+
+export function volumeMessage(
+  item: Pick<StockItem, 'volumeMl' | 'liquorType' | 'serviceStation'> | {
+    volumeMl: number;
+    liquorType: string;
+    serviceStation?: string;
+  },
+): {
   key: string;
   values: { ml?: number; amount?: number };
 } {
-  if (item.liquorType === 'Snacks') {
+  if (isKitchenItem(item)) {
     return { key: 'stock.volume.pack', values: { amount: item.volumeMl } };
   }
 
@@ -154,11 +183,17 @@ export function volumeMessage(item: Pick<StockItem, 'volumeMl' | 'liquorType'>):
   };
 }
 
-export function compactVolume(item: Pick<StockItem, 'volumeMl' | 'liquorType'>): {
+export function compactVolume(
+  item: Pick<StockItem, 'volumeMl' | 'liquorType' | 'serviceStation'> | {
+    volumeMl: number;
+    liquorType: string;
+    serviceStation?: string;
+  },
+): {
   key: string;
   values: { ml?: number; amount?: number };
 } {
-  if (item.liquorType === 'Snacks') {
+  if (isKitchenItem(item)) {
     return { key: 'stock.volume.pack', values: { amount: item.volumeMl } };
   }
   return { key: 'stock.volume.ml', values: { ml: item.volumeMl } };
@@ -220,11 +255,11 @@ export function applyStockFacet(items: StockItem[], facet: StockFacet): StockIte
   return items.filter((item) => item.liquorType === facet);
 }
 
-export function isKitchenItem(item: Pick<StockItem, 'liquorType'> | { liquorType: string }): boolean {
-  return item.liquorType === 'Snacks';
+export function isKitchenItem(item: { serviceStation?: string; liquorType?: string }): boolean {
+  return resolveServiceStation(item.serviceStation, item.liquorType) === 'kitchen';
 }
 
-export type OrderCatalogSection = 'bar' | 'kitchen';
+export type OrderCatalogSection = ServiceStation;
 
 export const TOP_SELLERS_LIMIT = 8;
 
@@ -481,6 +516,7 @@ export function parseCatalogItem(input: CatalogItemInput): CatalogItemDraft {
   const brand = cleanLabel(input.brand, 'brand');
   const liquorType = cleanLabel(input.liquorType, 'type');
   const subType = cleanLabel(input.subType, 'type');
+  const serviceStation = resolveServiceStation(input.serviceStation, liquorType);
 
   const volumeText = input.volumeMl.trim();
   const volumeMl = Number(volumeText);
@@ -507,6 +543,7 @@ export function parseCatalogItem(input: CatalogItemInput): CatalogItemDraft {
     brand,
     liquorType,
     subType,
+    serviceStation,
     volumeMl,
     purchasePrice: purchasePaise / 100,
     sellingPrice: sellingPaise / 100,

@@ -1,12 +1,20 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-import { formatOrderSequence, lineTotalPaise, localDateKey, nextSequenceValue, readSequenceTail, sequenceSearchNeedle } from '../../domain/billing';
+import {
+  formatOrderSequence,
+  LIFETIME_SEQUENCE_KEY,
+  lineTotalPaise,
+  nextSequenceValue,
+  readSequenceNumber,
+  sequenceSearchNeedle,
+} from '../../domain/billing';
 import { OrderValidationError } from '../../domain/errors';
 import { newId } from '../../security/id';
 import { isUniqueConstraintError, withDatabase, withLockedTransaction } from '../local/database';
 import { normalizeTableCount } from '../local/rows';
 import { requestSync, syncNow } from '../sync/engine';
 import { enqueueDelete, enqueueUpsert } from '../sync/outbox';
+import { resolveServiceStation } from '../../domain/models/inventory';
 import {
   isOrderStatus,
   isOrderType,
@@ -20,7 +28,7 @@ import {
 const ORDER_COLUMNS = `id, tenant_id, table_id, order_type, status, total_amount, paid_amount,
   payment_method, is_credit, order_sequence_string, created_at, closed_at`;
 
-const LINE_COLUMNS = `id, item_id, item_code, name_en, name_mr, liquor_type, volume_ml, quantity, unit_price`;
+const LINE_COLUMNS = `id, item_id, item_code, name_en, name_mr, liquor_type, service_station, volume_ml, quantity, unit_price`;
 
 type OrderRow = {
   id: string;
@@ -45,6 +53,7 @@ type LineRow = {
   name_en: string;
   name_mr: string;
   liquor_type: string;
+  service_station: string;
   volume_ml: number;
   quantity: number;
   unit_price: number;
@@ -56,6 +65,7 @@ type ItemRow = {
   name_en: string;
   name_mr: string;
   liquor_type: string;
+  service_station: string;
   volume_ml: number;
   selling_price: number;
   current_stock: number;
@@ -231,11 +241,13 @@ export async function addOrderItem(input: {
     // Each unit is its own row so staff can void one serve without editing shared qty.
     await applyStockDelta(database, input.tenantId, item.id, -input.quantity);
     const unitPrice = Math.round(item.selling_price * 100) / 100;
+    const serviceStation = resolveServiceStation(item.service_station, item.liquor_type);
     for (let index = 0; index < input.quantity; index += 1) {
       await database.runAsync(
         `INSERT INTO order_items (
-           id, order_id, item_id, item_code, name_en, name_mr, liquor_type, volume_ml, quantity, unit_price
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           id, order_id, item_id, item_code, name_en, name_mr, liquor_type, service_station,
+           volume_ml, quantity, unit_price
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           newId(),
           order.id,
@@ -244,6 +256,7 @@ export async function addOrderItem(input: {
           item.name_en,
           item.name_mr,
           item.liquor_type,
+          serviceStation,
           item.volume_ml,
           1,
           unitPrice,
@@ -426,36 +439,43 @@ async function insertOrder(
 }
 
 /**
- * The daily tail only moves forward. Line edits, tab changes, and table-count
- * changes do not touch this row. Past bill strings are read so a missing
- * tracker cannot reuse a number that was already issued.
+ * Lifetime bill numbers only move forward. Past order strings (including
+ * legacy dated `YYYY-MM-DD-NN` values) are scanned so a missing tracker
+ * cannot reuse a number that was already issued.
  */
-async function allocateOrderSequence(database: SQLiteDatabase, tenantId: string, now: number): Promise<string> {
-  const dateKey = localDateKey(now);
+async function allocateOrderSequence(database: SQLiteDatabase, tenantId: string, _now: number): Promise<string> {
   const tracker = await database.getFirstAsync<{ last_value: number }>(
     'SELECT last_value FROM order_sequences WHERE tenant_id = ? AND sequence_date = ?',
-    [tenantId, dateKey],
+    [tenantId, LIFETIME_SEQUENCE_KEY],
+  );
+  const daily = await database.getFirstAsync<{ total: number }>(
+    `SELECT COALESCE(SUM(last_value), 0) AS total
+     FROM order_sequences
+     WHERE tenant_id = ? AND sequence_date <> ?`,
+    [tenantId, LIFETIME_SEQUENCE_KEY],
   );
   const billed = await database.getAllAsync<{ order_sequence_string: string }>(
-    `SELECT order_sequence_string
-     FROM orders
-     WHERE tenant_id = ? AND order_sequence_string LIKE ?`,
-    [tenantId, `${dateKey}-%`],
+    'SELECT order_sequence_string FROM orders WHERE tenant_id = ?',
+    [tenantId],
   );
-  const billedTail = billed.reduce(
-    (max, row) => Math.max(max, readSequenceTail(row.order_sequence_string, dateKey)),
-    0,
+  const orderCount = await database.getFirstAsync<{ total: number }>(
+    'SELECT COUNT(*) AS total FROM orders WHERE tenant_id = ?',
+    [tenantId],
   );
-  const next = nextSequenceValue(Number(tracker?.last_value ?? 0), billedTail);
+  const billedMax = billed.reduce((max, row) => Math.max(max, readSequenceNumber(row.order_sequence_string)), 0);
+  const next = nextSequenceValue(
+    Math.max(Number(tracker?.last_value ?? 0), Number(daily?.total ?? 0)),
+    Math.max(billedMax, Number(orderCount?.total ?? 0)),
+  );
   await database.runAsync(
     `INSERT INTO order_sequences (tenant_id, sequence_date, last_value)
      VALUES (?, ?, ?)
      ON CONFLICT (tenant_id, sequence_date)
      DO UPDATE SET last_value = excluded.last_value`,
-    [tenantId, dateKey, next],
+    [tenantId, LIFETIME_SEQUENCE_KEY, next],
   );
-  await enqueueUpsert(database, 'order_sequences', dateKey);
-  return formatOrderSequence(dateKey, next);
+  await enqueueUpsert(database, 'order_sequences', LIFETIME_SEQUENCE_KEY);
+  return formatOrderSequence(next);
 }
 
 async function setLineQuantity(
@@ -540,12 +560,12 @@ async function findItem(
   const code = input.itemCode?.trim() ?? '';
   const row = input.itemId
     ? await database.getFirstAsync<ItemRow>(
-        `SELECT id, item_code, name_en, name_mr, liquor_type, volume_ml, selling_price, current_stock
+        `SELECT id, item_code, name_en, name_mr, liquor_type, service_station, volume_ml, selling_price, current_stock
          FROM items WHERE id = ? AND tenant_id = ?`,
         [input.itemId, tenantId],
       )
     : await database.getFirstAsync<ItemRow>(
-        `SELECT id, item_code, name_en, name_mr, liquor_type, volume_ml, selling_price, current_stock
+        `SELECT id, item_code, name_en, name_mr, liquor_type, service_station, volume_ml, selling_price, current_stock
          FROM items WHERE tenant_id = ? AND item_code = ? COLLATE NOCASE
          ORDER BY item_code LIMIT 1`,
         [tenantId, code],
@@ -651,6 +671,7 @@ function mapLine(row: LineRow): OrderLine {
     nameEn: row.name_en,
     nameMr: row.name_mr,
     liquorType: row.liquor_type,
+    serviceStation: resolveServiceStation(row.service_station, row.liquor_type),
     volumeMl: Number(row.volume_ml),
     quantity: Number(row.quantity),
     unitPrice: Number(row.unit_price),

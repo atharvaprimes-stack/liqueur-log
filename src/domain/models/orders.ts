@@ -1,3 +1,5 @@
+import type { ServiceStation } from './inventory';
+
 export const ORDER_TYPES = ['TABLE', 'COUNTER'] as const;
 export const ORDER_STATUSES = ['OPEN', 'PAID'] as const;
 export const PAYMENT_METHODS = ['Cash', 'UPI', 'Other'] as const;
@@ -5,6 +7,7 @@ export const PAYMENT_METHODS = ['Cash', 'UPI', 'Other'] as const;
 export type OrderType = (typeof ORDER_TYPES)[number];
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+export type { ServiceStation };
 
 export type OrderLine = {
   id: string;
@@ -13,6 +16,7 @@ export type OrderLine = {
   nameEn: string;
   nameMr: string;
   liquorType: string;
+  serviceStation: ServiceStation;
   volumeMl: number;
   quantity: number;
   unitPrice: number;

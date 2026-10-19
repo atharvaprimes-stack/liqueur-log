@@ -7,6 +7,7 @@ import { File as ExpoFile, Paths } from 'expo-file-system';
 import type { ReceiptPayload } from '../domain/billing';
 import { buildReceiptDocument, type ReceiptCopy } from '../domain/receiptDocument';
 import { buildReceiptPdf } from './receiptPdf';
+import { receiptQrDataUri } from './receiptQr';
 
 const WHATSAPP_PACKAGES = ['com.whatsapp', 'com.whatsapp.w4b'];
 const FLAG_GRANT_READ_URI_PERMISSION = 1;
@@ -52,7 +53,8 @@ export async function shareReceipt(receipt: ReceiptPayload, copy: ReceiptCopy): 
 
 export async function printReceipt(receipt: ReceiptPayload, copy: ReceiptCopy): Promise<void> {
   if (Platform.OS === 'web') {
-    await printReceiptHtml(buildReceiptDocument(receipt, copy).html);
+    const document = buildReceiptDocument(receipt, copy, await receiptQrDataUri());
+    await printReceiptHtml(document.html);
     return;
   }
   const pdf = await buildReceiptPdf(receipt, copy);

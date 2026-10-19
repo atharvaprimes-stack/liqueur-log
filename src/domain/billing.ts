@@ -1,22 +1,27 @@
 import { OrderValidationError } from './errors';
 import { parseRupeeToPaise } from './money';
+import type { ServiceStation } from './models/inventory';
 import { isPaymentMethod, type PaymentMethod } from './models/orders';
 
 const SEQUENCE_PATTERN = /^(\d{4}-\d{2}-\d{2})-(\d+)$/;
+const PLAIN_SEQUENCE_PATTERN = /^(\d+)$/;
+/** Shared counter key — bill numbers do not reset each day. */
+export const LIFETIME_SEQUENCE_KEY = 'all';
 const WIDTH = 32;
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
 
 export type ReceiptLine = {
   label: string;
   quantity: number;
   unitPrice: number;
   lineTotal: number;
+  station: ServiceStation;
 };
 
 export type ReceiptPayload = {
   sequence: string;
   heading: string;
   businessName: string;
+  address: string;
   cashierName: string;
   closedAt: number;
   lines: ReceiptLine[];
@@ -39,14 +44,30 @@ export function localDateKey(timestamp: number): string {
   return `${year}-${month}-${day}`;
 }
 
-export function formatOrderSequence(dateKey: string, value: number): string {
-  return `${dateKey}-${String(value).padStart(2, '0')}`;
+export function formatOrderSequence(value: number): string {
+  return String(value);
 }
 
+/** Reads a continuous bill number, including legacy `YYYY-MM-DD-NN` strings. */
+export function readSequenceNumber(sequence: string): number {
+  const plain = PLAIN_SEQUENCE_PATTERN.exec(sequence.trim());
+  if (plain) {
+    const value = Number(plain[1]);
+    return Number.isInteger(value) && value > 0 ? value : 0;
+  }
+  const dated = SEQUENCE_PATTERN.exec(sequence.trim());
+  if (!dated) {
+    return 0;
+  }
+  const value = Number(dated[2]);
+  return Number.isInteger(value) && value > 0 ? value : 0;
+}
+
+/** @deprecated Prefer readSequenceNumber — kept for older dated sequence helpers. */
 export function readSequenceTail(sequence: string, dateKey: string): number {
   const match = SEQUENCE_PATTERN.exec(sequence);
   if (!match || match[1] !== dateKey) {
-    return 0;
+    return readSequenceNumber(sequence);
   }
   const value = Number(match[2]);
   return Number.isInteger(value) && value > 0 ? value : 0;
@@ -58,12 +79,19 @@ export function nextSequenceValue(trackerValue: number, billedTail: number): num
   return Math.max(tracker, billed) + 1;
 }
 
+export function displayBillNumber(sequence: string): string {
+  const value = readSequenceNumber(sequence);
+  return value > 0 ? String(value) : sequence.trim();
+}
+
 export function formatBillStamp(timestamp: number): string {
   const date = new Date(timestamp);
   const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = String(date.getFullYear()).slice(-2);
   const hours = String(date.getHours()).padStart(2, '0');
   const minutes = String(date.getMinutes()).padStart(2, '0');
-  return `${day} ${MONTHS[date.getMonth()]} ${date.getFullYear()}  ${hours}:${minutes}`;
+  return `${day}-${month}-${year} ${hours}:${minutes}`;
 }
 
 export function sequenceSearchNeedle(query: string): string {
@@ -113,7 +141,7 @@ export function lineTotalPaise(quantity: number, unitPrice: number): number {
 export function aggregateReceiptLines(lines: readonly ReceiptLine[]): ReceiptLine[] {
   const grouped = new Map<string, ReceiptLine>();
   for (const line of lines) {
-    const key = `${line.label}\u0000${Math.round(line.unitPrice * 100)}`;
+    const key = `${line.station}\u0000${line.label}\u0000${Math.round(line.unitPrice * 100)}`;
     const existing = grouped.get(key);
     if (existing) {
       existing.quantity += line.quantity;
@@ -124,10 +152,28 @@ export function aggregateReceiptLines(lines: readonly ReceiptLine[]): ReceiptLin
         quantity: line.quantity,
         unitPrice: line.unitPrice,
         lineTotal: line.lineTotal,
+        station: line.station,
       });
     }
   }
   return [...grouped.values()];
+}
+
+/** Bar lines first, then kitchen — keeps bill sections stable for print and UI. */
+export function groupReceiptLinesByStation(lines: readonly ReceiptLine[]): {
+  bar: ReceiptLine[];
+  kitchen: ReceiptLine[];
+} {
+  const bar: ReceiptLine[] = [];
+  const kitchen: ReceiptLine[] = [];
+  for (const line of lines) {
+    if (line.station === 'kitchen') {
+      kitchen.push(line);
+    } else {
+      bar.push(line);
+    }
+  }
+  return { bar, kitchen };
 }
 
 export function formatReceiptAmount(amount: number): string {
@@ -143,9 +189,15 @@ export function formatReceiptMath(quantity: number, unitPrice: number, pcs: stri
   return `${quantity} ${pcs} x ${formatReceiptAmount(unitPrice)}`;
 }
 
-export function receiptItemLabel(name: string, liquorType: string, volumeMl: number): string {
+export function receiptItemLabel(
+  name: string,
+  liquorType: string,
+  volumeMl: number,
+  station?: ServiceStation,
+): string {
   const title = name.trim().replace(/\s+/g, ' ');
-  const size = liquorType === 'Snacks' ? `${volumeMl}g` : `${volumeMl}ml`;
+  const kitchen = station === 'kitchen' || liquorType === 'Snacks';
+  const size = kitchen ? `${volumeMl}g` : `${volumeMl}ml`;
   return title ? `${title} ${size}` : size;
 }
 
@@ -164,6 +216,7 @@ export function receiptTotals(
 
 export function buildReceipt(input: {
   businessName: string;
+  address?: string;
   sequence: string;
   heading: string;
   cashierName: string;
@@ -174,15 +227,17 @@ export function buildReceipt(input: {
   paymentLabel: string;
   isCredit: boolean;
   labels: {
+    billNo: string;
     cashier: string;
     subtotal: string;
-    tax: string;
     roundOff: string;
     total: string;
     credit: string;
     thanks: string;
     poweredBy: string;
     pcs: string;
+    bar: string;
+    kitchen: string;
   };
 }): ReceiptPayload {
   const balancePaise = Math.max(Math.round(input.totalAmount * 100) - Math.round(input.paidAmount * 100), 0);
@@ -190,27 +245,40 @@ export function buildReceipt(input: {
   const totals = receiptTotals(input.lines, input.totalAmount);
   const dash = '-'.repeat(WIDTH);
   const equals = '='.repeat(WIDTH);
-  const rows = [
-    center(input.businessName.toLocaleUpperCase()),
+  const stamp = formatBillStamp(input.closedAt);
+  const place = input.heading.trim();
+  const cashier = input.cashierName.trim();
+  const address = (input.address ?? '').trim().replace(/\s+/g, ' ');
+  const sections = groupReceiptLinesByStation(input.lines);
+  const rows = [center(input.businessName.toLocaleUpperCase())];
+  if (address) {
+    rows.push(center(address));
+  }
+  rows.push(
     equals,
-    center(input.sequence),
-    center(formatBillStamp(input.closedAt)),
-    center(input.heading),
-  ];
-  if (input.cashierName.trim()) {
-    rows.push(center(`${input.labels.cashier}: ${input.cashierName.trim()}`));
-  }
-  rows.push(dash);
+    metaRow(input.labels.billNo, stamp, 'left', 'right'),
+    metaRow(place, cashier, 'left', 'right'),
+    dash,
+  );
 
-  for (const line of input.lines) {
-    rows.push(...wrapText(line.label));
-    rows.push(pair(formatReceiptMath(line.quantity, line.unitPrice, input.labels.pcs), formatReceiptAmount(line.lineTotal)));
-  }
+  const appendSection = (title: string, lines: ReceiptLine[]) => {
+    if (lines.length === 0) {
+      return;
+    }
+    rows.push(center(`· ${title.toLocaleUpperCase()} ·`));
+    for (const line of lines) {
+      rows.push(...wrapText(line.label));
+      rows.push(
+        pair(formatReceiptMath(line.quantity, line.unitPrice, input.labels.pcs), formatReceiptAmount(line.lineTotal)),
+      );
+    }
+  };
+  appendSection(input.labels.bar, sections.bar);
+  appendSection(input.labels.kitchen, sections.kitchen);
 
   rows.push(
     dash,
     pair(input.labels.subtotal, formatReceiptAmount(totals.subtotal)),
-    pair(input.labels.tax, formatReceiptAmount(totals.taxAmount)),
     pair(input.labels.roundOff, formatReceiptAmount(totals.roundOff)),
     equals,
     pair(input.labels.total, formatReceiptAmount(input.totalAmount)),
@@ -226,6 +294,7 @@ export function buildReceipt(input: {
     sequence: input.sequence,
     heading: input.heading,
     businessName: input.businessName,
+    address,
     cashierName: input.cashierName.trim(),
     closedAt: input.closedAt,
     lines: input.lines,
@@ -253,6 +322,25 @@ function pair(left: string, right: string): string {
   const leftText = room > 0 ? clip(left, room) : '';
   const gap = Math.max(WIDTH - leftText.length - rightText.length, 1);
   return `${leftText}${' '.repeat(gap)}${rightText}`;
+}
+
+function metaRow(
+  left: string,
+  right: string,
+  leftAlign: 'left' | 'right',
+  rightAlign: 'left' | 'right',
+): string {
+  const half = Math.floor(WIDTH / 2);
+  return `${alignCell(left, half, leftAlign)}${alignCell(right, WIDTH - half, rightAlign)}`;
+}
+
+function alignCell(value: string, width: number, align: 'left' | 'right'): string {
+  const text = clip(value.trim(), width);
+  const pad = Math.max(width - [...text].length, 0);
+  if (align === 'right') {
+    return `${' '.repeat(pad)}${text}`;
+  }
+  return `${text}${' '.repeat(pad)}`;
 }
 
 function wrapText(value: string, width = WIDTH): string[] {

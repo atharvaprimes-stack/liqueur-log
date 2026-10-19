@@ -1,12 +1,22 @@
 import 'regenerator-runtime/runtime';
-import { PDFDocument, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
+import { PDFDocument, rgb, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib';
 
-import { formatBillStamp, formatReceiptAmount, formatReceiptMath, type ReceiptPayload } from '../domain/billing';
+import {
+  formatBillStamp,
+  formatReceiptAmount,
+  formatReceiptMath,
+  groupReceiptLinesByStation,
+  type ReceiptLine,
+  type ReceiptPayload,
+} from '../domain/billing';
 import { RECEIPT_PAGE_WIDTH, receiptFileName, type ReceiptCopy } from '../domain/receiptDocument';
 import { embedDocumentFont } from './pdfFont';
+import { embedReceiptQr, RECEIPT_QR_SIZE } from './receiptQr';
 
 const MARGIN = 10;
 const BLACK = rgb(0, 0, 0);
+const QR_PAD = 4;
+const QR_BORDER = 1;
 
 export type ReceiptPdf = {
   bytes: Uint8Array;
@@ -16,19 +26,26 @@ export type ReceiptPdf = {
 export async function buildReceiptPdf(receipt: ReceiptPayload, copy: ReceiptCopy): Promise<ReceiptPdf> {
   const pdf = await PDFDocument.create();
   const font = await embedDocumentFont(pdf);
+  const qr = await embedReceiptQr(pdf);
   const width = RECEIPT_PAGE_WIDTH - MARGIN * 2;
-  const contentHeight = measure(font, receipt, copy, width);
+  const contentHeight = measure(font, receipt, copy, width, qr);
   const page = pdf.addPage([RECEIPT_PAGE_WIDTH, contentHeight]);
-  paint(page, font, receipt, copy, width, page.getHeight() - MARGIN);
+  paint(page, font, receipt, copy, width, page.getHeight() - MARGIN, qr);
   return {
     bytes: await pdf.save(),
     fileName: receiptFileName(receipt.sequence),
   };
 }
 
-function measure(font: PDFFont, receipt: ReceiptPayload, copy: ReceiptCopy, width: number): number {
+function measure(
+  font: PDFFont,
+  receipt: ReceiptPayload,
+  copy: ReceiptCopy,
+  width: number,
+  qr: PDFImage,
+): number {
   const cursor = { y: 0 };
-  paint(null, font, receipt, copy, width, 0, cursor);
+  paint(null, font, receipt, copy, width, 0, qr, cursor);
   return Math.max(MARGIN + -cursor.y + MARGIN, 160);
 }
 
@@ -39,33 +56,22 @@ function paint(
   copy: ReceiptCopy,
   width: number,
   startY: number,
+  qr: PDFImage,
   cursor: { y: number } = { y: startY },
 ): void {
   center(page, font, receipt.businessName.toLocaleUpperCase(), 13, width, cursor, 1);
+  if (receipt.address.trim()) {
+    center(page, font, receipt.address.trim(), 8, width, cursor, 1);
+  }
   rule(page, font, '=', width, cursor);
-  center(page, font, copy.billLabel, 11, width, cursor, 1);
-  center(page, font, formatBillStamp(receipt.closedAt), 9, width, cursor, 1);
-  center(page, font, receipt.heading, 9, width, cursor, 1);
-  if (receipt.cashierName.trim()) {
-    center(page, font, `${copy.cashier}: ${receipt.cashierName.trim()}`, 9, width, cursor, 1);
-  }
+  headerRow(page, font, copy.billLabel, formatBillStamp(receipt.closedAt), width, cursor, 'left', 'right', 8);
+  headerRow(page, font, receipt.heading, receipt.cashierName.trim(), width, cursor, 'left', 'right', 8);
   rule(page, font, '-', width, cursor);
-  for (const line of receipt.lines) {
-    left(page, font, line.label, 10, width, cursor, 0);
-    row(
-      page,
-      font,
-      formatReceiptMath(line.quantity, line.unitPrice, copy.pcs),
-      formatReceiptAmount(line.lineTotal),
-      9,
-      width,
-      cursor,
-      3,
-    );
-  }
+  const sections = groupReceiptLinesByStation(receipt.lines);
+  paintSection(page, font, copy.bar, sections.bar, copy.pcs, width, cursor);
+  paintSection(page, font, copy.kitchen, sections.kitchen, copy.pcs, width, cursor);
   rule(page, font, '-', width, cursor);
   row(page, font, copy.subtotal.toLocaleUpperCase(), formatReceiptAmount(receipt.subtotal), 9, width, cursor, 1);
-  row(page, font, copy.tax.toLocaleUpperCase(), formatReceiptAmount(receipt.taxAmount), 9, width, cursor, 1);
   row(page, font, copy.roundOff.toLocaleUpperCase(), formatReceiptAmount(receipt.roundOff), 9, width, cursor, 1);
   rule(page, font, '=', width, cursor);
   row(page, font, copy.total.toLocaleUpperCase(), formatReceiptAmount(receipt.totalAmount), 12, width, cursor, 2);
@@ -76,8 +82,111 @@ function paint(
     center(page, font, receipt.paymentLabel, 9, width, cursor, 1);
   }
   rule(page, font, '-', width, cursor);
+  scanPay(page, font, copy.scanPay, width, cursor, qr);
+  rule(page, font, '-', width, cursor);
   center(page, font, copy.thanks, 10, width, cursor, 1);
   center(page, font, copy.poweredBy, 8, width, cursor, 0);
+}
+
+function paintSection(
+  page: PDFPage | null,
+  font: PDFFont,
+  title: string,
+  lines: ReceiptLine[],
+  pcs: string,
+  width: number,
+  cursor: { y: number },
+): void {
+  if (lines.length === 0) {
+    return;
+  }
+  center(page, font, `· ${title.toLocaleUpperCase()} ·`, 7, width, cursor, 2);
+  for (const line of lines) {
+    left(page, font, line.label, 10, width, cursor, 0);
+    row(
+      page,
+      font,
+      formatReceiptMath(line.quantity, line.unitPrice, pcs),
+      formatReceiptAmount(line.lineTotal),
+      9,
+      width,
+      cursor,
+      3,
+    );
+  }
+}
+
+function scanPay(
+  page: PDFPage | null,
+  font: PDFFont,
+  label: string,
+  width: number,
+  cursor: { y: number },
+  qr: PDFImage,
+): void {
+  cursor.y -= 4;
+  center(page, font, label.toLocaleUpperCase(), 10, width, cursor, 4);
+  const box = RECEIPT_QR_SIZE + (QR_PAD + QR_BORDER) * 2;
+  const left = MARGIN + (width - box) / 2;
+  if (page) {
+    page.drawRectangle({
+      x: left,
+      y: cursor.y - box,
+      width: box,
+      height: box,
+      borderColor: BLACK,
+      borderWidth: QR_BORDER,
+      color: rgb(1, 1, 1),
+    });
+    page.drawImage(qr, {
+      x: left + QR_BORDER + QR_PAD,
+      y: cursor.y - box + QR_BORDER + QR_PAD,
+      width: RECEIPT_QR_SIZE,
+      height: RECEIPT_QR_SIZE,
+    });
+  }
+  cursor.y -= box + 4;
+}
+
+function headerRow(
+  page: PDFPage | null,
+  font: PDFFont,
+  leftText: string,
+  rightText: string,
+  width: number,
+  cursor: { y: number },
+  leftAlign: 'left' | 'right',
+  rightAlign: 'left' | 'right',
+  size: number,
+): void {
+  const gap = 4;
+  const half = (width - gap) / 2;
+  const left = clipToWidth(font, leftText.trim(), size, half);
+  const right = clipToWidth(font, rightText.trim(), size, half);
+  if (page) {
+    const leftWidth = font.widthOfTextAtSize(left, size);
+    const rightWidth = font.widthOfTextAtSize(right, size);
+    const leftX = leftAlign === 'right' ? MARGIN + half - leftWidth : MARGIN;
+    const rightX = rightAlign === 'right' ? MARGIN + width - rightWidth : MARGIN + half + gap;
+    if (left) {
+      page.drawText(left, { x: leftX, y: cursor.y - size, size, font, color: BLACK });
+    }
+    if (right) {
+      page.drawText(right, { x: rightX, y: cursor.y - size, size, font, color: BLACK });
+    }
+  }
+  cursor.y -= step(size) + 1;
+}
+
+function clipToWidth(font: PDFFont, text: string, size: number, maxWidth: number): string {
+  if (!text || font.widthOfTextAtSize(text, size) <= maxWidth) {
+    return text;
+  }
+  let clipped = text;
+  while (clipped.length > 0 && font.widthOfTextAtSize(`${clipped}…`, size) > maxWidth) {
+    clipped = clipped.slice(0, -1);
+  }
+  return clipped ? `${clipped}…` : '';
 }
 
 function center(

@@ -3,6 +3,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
+import { displayBillNumber } from '../../domain/billing';
 import { formatInr } from '../../domain/money';
 import type { DashboardRecentOrder } from '../../domain/models/dashboard';
 import { useTheme } from '../../theme/theme-context';
@@ -77,7 +78,7 @@ function OrderRow({ order }: { order: DashboardRecentOrder }) {
       <View className="min-w-0 flex-1">
         <View className="flex-row items-center gap-2">
           <Text className="min-w-0 flex-1 text-sm font-bold text-ink" numberOfLines={1}>
-            {order.sequence}
+            {displayBillNumber(order.sequence)}
             <Text className="font-semibold text-muted">{` · ${tableLabel}`}</Text>
           </Text>
           <StatusBadge label={t(badge.labelKey)} background={badge.background} color={badge.color} />

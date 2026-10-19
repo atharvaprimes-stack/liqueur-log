@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,7 +14,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { Redirect, type Href } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
-import { lineTotalPaise } from '../domain/billing';
+import { displayBillNumber, lineTotalPaise } from '../domain/billing';
 import type { OrderErrorCode } from '../domain/errors';
 import { formatInr } from '../domain/money';
 import {
@@ -36,10 +36,6 @@ import { ActionRow } from './FormActions';
 import { PaymentSheet } from './PaymentSheet';
 import { ScreenWrapper } from './ScreenWrapper';
 import { ThermalReceipt } from './ThermalReceipt';
-
-function cleanBillId(sequence: string): string {
-  return sequence.replace(/-/g, '');
-}
 
 export function OrderCartScreen({ target, parent }: { target: CartTarget; parent: Href }) {
   const { t, i18n } = useTranslation();
@@ -74,6 +70,8 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
 
   // Newest serves first — matches bar POS “just poured” flow.
   const displayLines = order ? [...order.lines].reverse() : [];
+  const barLines = displayLines.filter((line) => line.serviceStation === 'bar');
+  const kitchenLines = displayLines.filter((line) => line.serviceStation === 'kitchen');
   const serveCount = order?.itemCount ?? 0;
   const runningTotal = order?.totalAmount ?? 0;
   const searchMatches = searching ? searchResults.slice(0, 8) : [];
@@ -147,6 +145,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
       return;
     }
     billing.clearError();
+    setShareNotice(null);
     setPaymentOpen(true);
   }, [billing, order]);
 
@@ -177,14 +176,19 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
       return;
     }
     try {
-      const closed = await billing.collectAndClose(order.id, payment);
-      cart.remember(closed);
-      setShareNotice(null);
+      await billing.collectAndClose(order.id, payment);
       setPaymentOpen(false);
+      leaveScreen(parent);
     } catch {
       setPaymentOpen(true);
     }
   };
+
+  const buildDraftPreview = billing.draftReceiptPreview;
+  const draftPreview = useCallback(
+    (method: PaymentMethod) => (order ? buildDraftPreview(order, method) : null),
+    [buildDraftPreview, order],
+  );
 
   if (!isReady) {
     return null;
@@ -219,7 +223,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
         <View className="flex-1">
           {preview ? (
             <ScrollView className="flex-1" contentContainerClassName="items-center px-2 pb-6">
-              <OrderHeader title={title} billId={cleanBillId(order.sequence)} total={formatInr(order.totalAmount)} />
+              <OrderHeader title={title} billId={displayBillNumber(order.sequence)} total={formatInr(order.totalAmount)} />
               {shareNotice === 'failed' ? (
                 <Text className="mt-3 self-stretch px-2 text-sm text-danger">{t('billing.shareFailed')}</Text>
               ) : null}
@@ -237,7 +241,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
               contentContainerClassName="px-4 pb-4"
               keyboardShouldPersistTaps="handled"
             >
-              <OrderHeader title={title} billId={cleanBillId(order.sequence)} total={formatInr(runningTotal)} />
+              <OrderHeader title={title} billId={displayBillNumber(order.sequence)} total={formatInr(runningTotal)} />
 
               {!editable ? (
                 <View className="mt-3 rounded-xl border border-line bg-surface p-3">
@@ -371,24 +375,30 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                   orderSectionOffset.current = event.nativeEvent.layout.y;
                 }}
               >
-                {displayLines.map((line, index) => (
-                  <View
-                    key={line.id}
-                    onLayout={(event) => {
-                      rowOffsets.current[line.id] = orderSectionOffset.current + event.nativeEvent.layout.y;
-                    }}
-                  >
-                    <CompactOrderRow
-                      line={line}
-                      language={i18n.language}
-                      editable={editable}
-                      busy={busy}
-                      focused={focusLineId === line.id}
-                      showDivider={index < displayLines.length - 1}
-                      onRemove={() => onRemoveLine(line)}
-                    />
-                  </View>
-                ))}
+                <OrderStationBlock
+                  title={t('billing.barItems')}
+                  lines={barLines}
+                  language={i18n.language}
+                  editable={editable}
+                  busy={busy}
+                  focusLineId={focusLineId}
+                  rowOffsets={rowOffsets}
+                  orderSectionOffset={orderSectionOffset}
+                  onRemove={onRemoveLine}
+                  showTopDivider={false}
+                />
+                <OrderStationBlock
+                  title={t('billing.kitchenItems')}
+                  lines={kitchenLines}
+                  language={i18n.language}
+                  editable={editable}
+                  busy={busy}
+                  focusLineId={focusLineId}
+                  rowOffsets={rowOffsets}
+                  orderSectionOffset={orderSectionOffset}
+                  onRemove={onRemoveLine}
+                  showTopDivider={barLines.length > 0 && kitchenLines.length > 0}
+                />
               </View>
 
             </ScrollView>
@@ -462,17 +472,33 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
 
           <PaymentSheet
             visible={paymentOpen}
-            totalAmount={order.totalAmount}
+            order={order}
             submitting={billing.isSubmitting}
             errorCode={billing.errorCode}
             confirmLabel={target.kind === 'counter' ? t('billing.closeCounter') : t('billing.closeTable')}
+            shareNotice={shareNotice}
+            draftPreview={draftPreview}
             onClose={() => {
               if (!billing.isSubmitting) {
                 setPaymentOpen(false);
+                setShareNotice(null);
               }
             }}
             onSubmit={(payment) => {
               void onCollect(payment);
+            }}
+            onPrint={(preview) => {
+              void billing.printPreview(preview);
+            }}
+            onShare={(preview) => {
+              setShareNotice(null);
+              void billing.sharePreview(preview).then((result) => {
+                if (result === 'downloaded') {
+                  setShareNotice('downloaded');
+                } else if (result === 'unopened') {
+                  setShareNotice('failed');
+                }
+              });
             }}
           />
         </View>
@@ -498,6 +524,59 @@ function OrderHeader({ title, billId, total }: { title: string; billId: string; 
           {total}
         </Text>
       </View>
+    </View>
+  );
+}
+
+function OrderStationBlock({
+  title,
+  lines,
+  language,
+  editable,
+  busy,
+  focusLineId,
+  rowOffsets,
+  orderSectionOffset,
+  onRemove,
+  showTopDivider,
+}: {
+  title: string;
+  lines: OrderLine[];
+  language: string;
+  editable: boolean;
+  busy: boolean;
+  focusLineId: string | null;
+  rowOffsets: MutableRefObject<Record<string, number>>;
+  orderSectionOffset: MutableRefObject<number>;
+  onRemove: (line: OrderLine) => void;
+  showTopDivider: boolean;
+}) {
+  if (lines.length === 0) {
+    return null;
+  }
+  return (
+    <View className={showTopDivider ? 'border-t border-line' : ''}>
+      <Text className="bg-canvas px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
+        {title}
+      </Text>
+      {lines.map((line, index) => (
+        <View
+          key={line.id}
+          onLayout={(event) => {
+            rowOffsets.current[line.id] = orderSectionOffset.current + event.nativeEvent.layout.y;
+          }}
+        >
+          <CompactOrderRow
+            line={line}
+            language={language}
+            editable={editable}
+            busy={busy}
+            focused={focusLineId === line.id}
+            showDivider={index < lines.length - 1}
+            onRemove={() => onRemove(line)}
+          />
+        </View>
+      ))}
     </View>
   );
 }

@@ -3,7 +3,7 @@ import { ActivityIndicator, FlatList, Pressable, Text, TextInput, View } from 'r
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
-import { formatBillStamp } from '../domain/billing';
+import { displayBillNumber, formatBillStamp } from '../domain/billing';
 import { formatInr } from '../domain/money';
 import { balancePaise, type OrderSummary } from '../domain/models/orders';
 import { useBillHistory } from '../hooks/useBillHistory';
@@ -71,7 +71,7 @@ function HistoryRow({ order, parent }: { order: OrderSummary; parent: BillListPa
       }
       className="mb-2 rounded-2xl border border-line bg-surface px-4 py-3"
     >
-      <Text className="text-base font-bold text-ink">{order.sequence}</Text>
+      <Text className="text-base font-bold text-ink">{displayBillNumber(order.sequence)}</Text>
       <Text className="mt-1 text-sm text-muted">
         {place} · {method} · {order.closedAt ? formatBillStamp(order.closedAt) : ''}
       </Text>

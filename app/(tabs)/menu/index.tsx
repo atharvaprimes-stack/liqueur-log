@@ -139,12 +139,6 @@ export default function MenuScreen() {
               onPress={() => router.push('/menu/vendors')}
             />
             <SettingLink
-              icon="archive-outline"
-              title={t('menu.stockEntry')}
-              hint={t('menu.stockEntryHint')}
-              onPress={() => router.push('/stock/purchase')}
-            />
-            <SettingLink
               icon="people-outline"
               title={t('menu.staff')}
               hint={t('menu.staffHint')}

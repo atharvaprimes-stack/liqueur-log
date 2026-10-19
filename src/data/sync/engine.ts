@@ -214,7 +214,8 @@ async function readRecord(
       return null;
     }
     order.lines = await database.getAllAsync(
-      `SELECT id, order_id, item_id, item_code, name_en, name_mr, liquor_type, volume_ml, quantity, unit_price
+      `SELECT id, order_id, item_id, item_code, name_en, name_mr, liquor_type, service_station,
+              volume_ml, quantity, unit_price
        FROM order_items WHERE order_id = ?`,
       [entityId],
     );
@@ -223,7 +224,7 @@ async function readRecord(
 
   const tables: Record<string, string> = {
     items: `SELECT id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
-              volume_ml, purchase_price, selling_price, low_stock_threshold, updated_at
+              service_station, volume_ml, purchase_price, selling_price, low_stock_threshold, updated_at
        FROM items WHERE id = ? AND tenant_id = ?`,
     item_types: 'SELECT id, tenant_id, name, sort_order, updated_at FROM item_types WHERE id = ? AND tenant_id = ?',
     item_strengths:

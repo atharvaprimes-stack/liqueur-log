@@ -6,6 +6,7 @@ import {
   parseCatalogItem,
   parseCatalogTerm,
   parseVendor,
+  resolveServiceStation,
   type CatalogItemInput,
   type CatalogTerm,
   type PurchaseFormInput,
@@ -28,6 +29,7 @@ type ItemRow = {
   brand: string;
   liquor_type: string;
   sub_type: string;
+  service_station: string;
   volume_ml: number;
   purchase_price: number;
   selling_price: number;
@@ -36,7 +38,7 @@ type ItemRow = {
 };
 
 const ITEM_COLUMNS = `id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
-  volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold`;
+  service_station, volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold`;
 
 export async function listStock(tenantId: string): Promise<StockItem[]> {
   return withDatabase(async (database) => {
@@ -485,8 +487,8 @@ export async function createCatalogItem(input: {
       await database.runAsync(
         `INSERT INTO items (
            id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
-           volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+           service_station, volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
         [
           itemId,
           input.tenantId,
@@ -497,6 +499,7 @@ export async function createCatalogItem(input: {
           draft.brand,
           liquorType,
           subType,
+          draft.serviceStation,
           draft.volumeMl,
           draft.purchasePrice,
           draft.sellingPrice,
@@ -535,7 +538,8 @@ export async function updateCatalogItem(input: {
       const updated = await database.runAsync(
         `UPDATE items
          SET item_code = ?, name_en = ?, name_mr = ?, brand = ?, liquor_type = ?, sub_type = ?,
-             volume_ml = ?, purchase_price = ?, selling_price = ?, low_stock_threshold = ?, updated_at = ?
+             service_station = ?, volume_ml = ?, purchase_price = ?, selling_price = ?,
+             low_stock_threshold = ?, updated_at = ?
          WHERE id = ? AND tenant_id = ?`,
         [
           draft.itemCode,
@@ -544,6 +548,7 @@ export async function updateCatalogItem(input: {
           draft.brand,
           liquorType,
           subType,
+          draft.serviceStation,
           draft.volumeMl,
           draft.purchasePrice,
           draft.sellingPrice,
@@ -859,6 +864,7 @@ function mapItem(row: ItemRow): StockItem | null {
     brand: row.brand,
     liquorType: row.liquor_type,
     subType: row.sub_type,
+    serviceStation: resolveServiceStation(row.service_station, row.liquor_type),
     volumeMl,
     purchasePrice: Math.round(purchasePrice * 100) / 100,
     sellingPrice: Math.round(sellingPrice * 100) / 100,

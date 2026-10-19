@@ -138,6 +138,7 @@ async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
   await ensureSyncColumns(database);
   // After any items-table rebuilds: add + backfill serial numbers.
   await ensureItemSerialNumbers(database);
+  await ensureServiceStations(database);
   await assertSchemaReady(database);
 
   console.log('[sqlite] database ready', { path: database.databasePath });
@@ -221,6 +222,37 @@ async function ensureItemSerialNumbers(database: SQLite.SQLiteDatabase): Promise
 
   await database.execAsync(
     'CREATE UNIQUE INDEX IF NOT EXISTS items_tenant_serial_no_idx ON items (tenant_id, serial_no) WHERE serial_no > 0',
+  );
+}
+
+/** Bar vs kitchen station on catalog items and bill line snapshots. */
+async function ensureServiceStations(database: SQLite.SQLiteDatabase): Promise<void> {
+  await ensureColumn(
+    database,
+    'items',
+    'service_station',
+    `ALTER TABLE items ADD COLUMN service_station TEXT NOT NULL DEFAULT 'bar'`,
+  );
+  await ensureColumn(
+    database,
+    'order_items',
+    'service_station',
+    `ALTER TABLE order_items ADD COLUMN service_station TEXT NOT NULL DEFAULT 'bar'`,
+  );
+
+  await database.runAsync(
+    `UPDATE items
+     SET service_station = 'kitchen'
+     WHERE liquor_type = 'Snacks' AND service_station <> 'kitchen'`,
+  );
+  await database.runAsync(
+    `UPDATE order_items
+     SET service_station = 'kitchen'
+     WHERE service_station <> 'kitchen'
+       AND (
+         liquor_type = 'Snacks'
+         OR item_id IN (SELECT id FROM items WHERE service_station = 'kitchen')
+       )`,
   );
 }
 

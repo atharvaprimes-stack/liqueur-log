@@ -1,6 +1,11 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-import { formatOrderSequence, localDateKey, nextSequenceValue, readSequenceTail } from '../../domain/billing';
+import {
+  formatOrderSequence,
+  LIFETIME_SEQUENCE_KEY,
+  nextSequenceValue,
+  readSequenceNumber,
+} from '../../domain/billing';
 import { isUniqueConstraintError } from '../local/database';
 import { normalizeTableCount } from '../local/rows';
 import { rememberAck } from './outbox';
@@ -210,11 +215,16 @@ async function applyItem(database: SQLiteDatabase, tenantId: string, item: Recor
   }
   const saved = await runSavepoint(database, async () => {
     const incomingSerial = Math.round(numberField(item, 'serial_no'));
+    const liquorType = textField(item, 'liquor_type');
+    const serviceStation =
+      textField(item, 'service_station').toLowerCase() === 'kitchen' || liquorType.toLowerCase() === 'snacks'
+        ? 'kitchen'
+        : 'bar';
     await database.runAsync(
       `INSERT INTO items (
          id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
-         volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+         service_station, volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          serial_no = CASE
            WHEN excluded.serial_no > 0 THEN excluded.serial_no
@@ -226,6 +236,7 @@ async function applyItem(database: SQLiteDatabase, tenantId: string, item: Recor
          brand = excluded.brand,
          liquor_type = excluded.liquor_type,
          sub_type = excluded.sub_type,
+         service_station = excluded.service_station,
          volume_ml = excluded.volume_ml,
          purchase_price = excluded.purchase_price,
          selling_price = excluded.selling_price,
@@ -241,8 +252,9 @@ async function applyItem(database: SQLiteDatabase, tenantId: string, item: Recor
         textField(item, 'name_en'),
         textField(item, 'name_mr'),
         textField(item, 'brand'),
-        textField(item, 'liquor_type'),
+        liquorType,
         textField(item, 'sub_type'),
+        serviceStation,
         Math.round(numberField(item, 'volume_ml')),
         numberField(item, 'purchase_price'),
         numberField(item, 'selling_price'),
@@ -544,10 +556,16 @@ async function insertOrderShell(
 }
 
 async function insertOrderLine(database: SQLiteDatabase, orderId: string, line: Record<string, unknown>): Promise<void> {
+  const liquorType = textField(line, 'liquor_type');
+  const serviceStation =
+    textField(line, 'service_station').toLowerCase() === 'kitchen' || liquorType.toLowerCase() === 'snacks'
+      ? 'kitchen'
+      : 'bar';
   await database.runAsync(
     `INSERT INTO order_items (
-       id, order_id, item_id, item_code, name_en, name_mr, liquor_type, volume_ml, quantity, unit_price
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       id, order_id, item_id, item_code, name_en, name_mr, liquor_type, service_station,
+       volume_ml, quantity, unit_price
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       textField(line, 'id'),
       orderId,
@@ -555,7 +573,8 @@ async function insertOrderLine(database: SQLiteDatabase, orderId: string, line: 
       textField(line, 'item_code'),
       textField(line, 'name_en'),
       textField(line, 'name_mr'),
-      textField(line, 'liquor_type'),
+      liquorType,
+      serviceStation,
       Math.round(numberField(line, 'volume_ml')),
       Math.round(numberField(line, 'quantity')),
       numberField(line, 'unit_price'),
@@ -619,29 +638,38 @@ async function openSlotTaken(
   return Boolean(other);
 }
 
-async function nextLocalSequence(database: SQLiteDatabase, tenantId: string, createdAt: number): Promise<string> {
-  const dateKey = localDateKey(createdAt || Date.now());
+async function nextLocalSequence(database: SQLiteDatabase, tenantId: string, _createdAt: number): Promise<string> {
   const tracker = await database.getFirstAsync<{ last_value: number }>(
     'SELECT last_value FROM order_sequences WHERE tenant_id = ? AND sequence_date = ?',
-    [tenantId, dateKey],
+    [tenantId, LIFETIME_SEQUENCE_KEY],
+  );
+  const daily = await database.getFirstAsync<{ total: number }>(
+    `SELECT COALESCE(SUM(last_value), 0) AS total
+     FROM order_sequences
+     WHERE tenant_id = ? AND sequence_date <> ?`,
+    [tenantId, LIFETIME_SEQUENCE_KEY],
   );
   const billed = await database.getAllAsync<{ order_sequence_string: string }>(
-    'SELECT order_sequence_string FROM orders WHERE tenant_id = ? AND order_sequence_string LIKE ?',
-    [tenantId, `${dateKey}-%`],
+    'SELECT order_sequence_string FROM orders WHERE tenant_id = ?',
+    [tenantId],
   );
-  const billedTail = billed.reduce(
-    (max, row) => Math.max(max, readSequenceTail(row.order_sequence_string, dateKey)),
-    0,
+  const orderCount = await database.getFirstAsync<{ total: number }>(
+    'SELECT COUNT(*) AS total FROM orders WHERE tenant_id = ?',
+    [tenantId],
   );
-  const next = nextSequenceValue(Number(tracker?.last_value ?? 0), billedTail);
+  const billedMax = billed.reduce((max, row) => Math.max(max, readSequenceNumber(row.order_sequence_string)), 0);
+  const next = nextSequenceValue(
+    Math.max(Number(tracker?.last_value ?? 0), Number(daily?.total ?? 0)),
+    Math.max(billedMax, Number(orderCount?.total ?? 0)),
+  );
   await database.runAsync(
     `INSERT INTO order_sequences (tenant_id, sequence_date, last_value)
      VALUES (?, ?, ?)
      ON CONFLICT(tenant_id, sequence_date)
      DO UPDATE SET last_value = MAX(order_sequences.last_value, excluded.last_value)`,
-    [tenantId, dateKey, next],
+    [tenantId, LIFETIME_SEQUENCE_KEY, next],
   );
-  return formatOrderSequence(dateKey, next);
+  return formatOrderSequence(next);
 }
 
 function orderVersion(order: Record<string, unknown>): number {
