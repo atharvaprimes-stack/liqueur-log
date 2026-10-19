@@ -247,7 +247,7 @@ function StockRow({
   const devanagari = language.startsWith('mr');
   const name = itemNames(item, language).primary;
   const volume = compactVolume(item);
-  const detail = `${item.itemCode} · ${t(volume.key, volume.values)}`;
+  const detail = `#${item.serialNo} · ${item.itemCode} · ${t(volume.key, volume.values)}`;
   const low = isLowStock(item);
   let status = '';
   let statusLabel = '';

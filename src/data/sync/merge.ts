@@ -209,12 +209,17 @@ async function applyItem(database: SQLiteDatabase, tenantId: string, item: Recor
     return;
   }
   const saved = await runSavepoint(database, async () => {
+    const incomingSerial = Math.round(numberField(item, 'serial_no'));
     await database.runAsync(
       `INSERT INTO items (
-         id, tenant_id, item_code, name_en, name_mr, brand, liquor_type, sub_type,
+         id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
          volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
+         serial_no = CASE
+           WHEN excluded.serial_no > 0 THEN excluded.serial_no
+           ELSE items.serial_no
+         END,
          item_code = excluded.item_code,
          name_en = excluded.name_en,
          name_mr = excluded.name_mr,
@@ -231,6 +236,7 @@ async function applyItem(database: SQLiteDatabase, tenantId: string, item: Recor
       [
         id,
         tenantId,
+        incomingSerial > 0 ? incomingSerial : 0,
         textField(item, 'item_code'),
         textField(item, 'name_en'),
         textField(item, 'name_mr'),

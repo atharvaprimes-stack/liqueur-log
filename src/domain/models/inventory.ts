@@ -21,6 +21,7 @@ export type StockPickerCategory = (typeof STOCK_PICKER_CATEGORIES)[number];
 export type StockItem = {
   id: string;
   tenantId: string;
+  serialNo: number;
   itemCode: string;
   nameEn: string;
   nameMr: string;
@@ -231,16 +232,14 @@ export function filterOrderSection(items: StockItem[], section: OrderCatalogSect
   return items.filter((item) => (section === 'kitchen' ? isKitchenItem(item) : !isKitchenItem(item)));
 }
 
-/** Search matches item code or display names only (not brand/type). */
+/** Search matches serial number, item code, or display names (not brand/type). */
 export function filterOrderSearch(items: StockItem[], query: string): StockItem[] {
   const needle = query.trim().toLowerCase();
   if (!needle) {
     return items;
   }
 
-  return items.filter((item) =>
-    [item.itemCode, item.nameEn, item.nameMr].some((value) => value.toLowerCase().includes(needle)),
-  );
+  return items.filter((item) => matchesItemSearch(item, needle));
 }
 
 export function filterOrderCatalog(
@@ -300,22 +299,26 @@ export function filterStock(items: StockItem[], query: string): StockItem[] {
     return items;
   }
 
-  return items.filter((item) =>
-    [item.itemCode, item.nameEn, item.nameMr, item.brand, item.liquorType, String(item.volumeMl)].some((value) =>
-      value.toLowerCase().includes(needle),
-    ),
+  return items.filter(
+    (item) =>
+      matchesItemSearch(item, needle) ||
+      [item.brand, item.liquorType, String(item.volumeMl)].some((value) => value.toLowerCase().includes(needle)),
   );
 }
 
-/** Fast stock-entry search: item code or display names only. */
+/** Fast stock-entry search: serial number, item code, or display names. */
 export function filterStockEntrySearch(items: StockItem[], query: string): StockItem[] {
   const needle = query.trim().toLowerCase();
   if (!needle) {
     return items;
   }
 
-  return items.filter((item) =>
-    [item.itemCode, item.nameEn, item.nameMr].some((value) => value.toLowerCase().includes(needle)),
+  return items.filter((item) => matchesItemSearch(item, needle));
+}
+
+export function matchesItemSearch(item: StockItem, needle: string): boolean {
+  return [String(item.serialNo), item.itemCode, item.nameEn, item.nameMr].some((value) =>
+    value.toLowerCase().includes(needle),
   );
 }
 

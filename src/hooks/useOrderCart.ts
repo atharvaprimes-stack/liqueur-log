@@ -32,9 +32,9 @@ export function useOrderCart(target: CartTarget): {
   clearError: () => void;
   reload: () => Promise<void>;
   remember: (order: SaleOrder) => void;
-  addByCode: (itemCode: string, quantity: number) => Promise<boolean>;
-  addItem: (itemId: string, quantity: number) => Promise<boolean>;
-  setQuantity: (lineId: string, quantity: number) => Promise<boolean>;
+  addByCode: (itemCode: string, quantity: number) => Promise<SaleOrder | null>;
+  addItem: (itemId: string, quantity: number) => Promise<SaleOrder | null>;
+  setQuantity: (lineId: string, quantity: number) => Promise<SaleOrder | null>;
   release: () => Promise<boolean>;
 } {
   const { currentUser } = useAuth();
@@ -105,9 +105,9 @@ export function useOrderCart(target: CartTarget): {
   );
 
   const runWrite = useCallback(
-    async (write: () => Promise<SaleOrder | null>) => {
+    async (write: () => Promise<SaleOrder | null>): Promise<{ ok: true; order: SaleOrder | null } | { ok: false }> => {
       if (pending.current) {
-        return false;
+        return { ok: false };
       }
       pending.current = true;
       revision.current += 1;
@@ -134,10 +134,10 @@ export function useOrderCart(target: CartTarget): {
             // The line is already saved. The next visit reloads stock.
           }
         }
-        return true;
+        return { ok: true, order: next };
       } catch (error) {
         setErrorCode(orderErrorCode(error));
-        return false;
+        return { ok: false };
       } finally {
         pending.current = false;
         setBusy(false);
@@ -157,13 +157,16 @@ export function useOrderCart(target: CartTarget): {
   }, [actorId, order, tenantId]);
 
   const guardWrite = useCallback(
-    async (write: (actor: { tenantId: string; actorId: string; orderId: string }) => Promise<SaleOrder | null>) => {
+    async (
+      write: (actor: { tenantId: string; actorId: string; orderId: string }) => Promise<SaleOrder | null>,
+    ): Promise<SaleOrder | null> => {
       try {
         const actor = requireOpen();
-        return await runWrite(() => write(actor));
+        const result = await runWrite(() => write(actor));
+        return result.ok ? result.order : null;
       } catch (error) {
         setErrorCode(orderErrorCode(error));
-        return false;
+        return null;
       }
     },
     [requireOpen, runWrite],
@@ -185,14 +188,19 @@ export function useOrderCart(target: CartTarget): {
     [guardWrite],
   );
 
-  const release = useCallback(
-    async () =>
-      guardWrite(async (actor) => {
+  const release = useCallback(async () => {
+    try {
+      const actor = requireOpen();
+      const result = await runWrite(async () => {
         await releaseEmptyOrder(actor);
         return null;
-      }),
-    [guardWrite],
-  );
+      });
+      return result.ok;
+    } catch (error) {
+      setErrorCode(orderErrorCode(error));
+      return false;
+    }
+  }, [requireOpen, runWrite]);
 
   const remember = useCallback((next: SaleOrder) => {
     revision.current += 1;

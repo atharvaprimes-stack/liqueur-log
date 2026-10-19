@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -18,10 +19,7 @@ import type { OrderErrorCode } from '../domain/errors';
 import { formatInr } from '../domain/money';
 import {
   filterOrderCatalog,
-  filterOrderSection,
   itemNames,
-  pickTopSellers,
-  TOP_SELLERS_LIMIT,
   volumeMessage,
   type OrderCatalogSection,
   type StockItem,
@@ -30,13 +28,14 @@ import { balancePaise, type OrderLine, type PaymentMethod } from '../domain/mode
 import { useBilling } from '../hooks/useBilling';
 import { useOrderCart, type CartTarget } from '../hooks/useOrderCart';
 import { useVoiceSearch } from '../hooks/useVoiceSearch';
+import { useAuth } from '../context/AuthContext';
+import { useBottomInset } from '../navigation/bottomInset';
 import { leaveScreen } from '../navigation/leave';
 import { useTheme } from '../theme/theme-context';
+import { ActionRow } from './FormActions';
 import { PaymentSheet } from './PaymentSheet';
 import { ScreenWrapper } from './ScreenWrapper';
-import { ActionRow } from './FormActions';
 import { ThermalReceipt } from './ThermalReceipt';
-import { useAuth } from '../context/AuthContext';
 
 function cleanBillId(sequence: string): string {
   return sequence.replace(/-/g, '');
@@ -46,6 +45,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
   const { t, i18n } = useTranslation();
   const { palette } = useTheme();
   const { currentUser, isReady } = useAuth();
+  const bottomInset = useBottomInset();
   const cart = useOrderCart(target);
   const billing = useBilling();
   const scrollRef = useRef<ScrollView>(null);
@@ -67,24 +67,16 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
     setFormError(null);
   }, i18n.language);
 
-  const sectionCatalog = useMemo(
-    () => filterOrderSection(cart.items, section),
-    [cart.items, section],
-  );
-
   const searchResults = useMemo(
     () => (searching ? filterOrderCatalog(cart.items, section, query) : []),
     [cart.items, query, searching, section],
   );
 
-  const topSellers = useMemo(
-    () => pickTopSellers(sectionCatalog, cart.frequentItemIds, TOP_SELLERS_LIMIT),
-    [cart.frequentItemIds, sectionCatalog],
-  );
-
-  const addItems = searching ? searchResults : topSellers;
-  const displayLines = order?.lines ?? [];
+  // Newest serves first — matches bar POS “just poured” flow.
+  const displayLines = order ? [...order.lines].reverse() : [];
+  const serveCount = order?.itemCount ?? 0;
   const runningTotal = order?.totalAmount ?? 0;
+  const searchMatches = searching ? searchResults.slice(0, 8) : [];
 
   const pulseLine = useCallback((lineId: string) => {
     setFocusLineId(lineId);
@@ -100,26 +92,46 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
   const onPickCatalogItem = useCallback(
     (item: StockItem) => {
       setFormError(null);
-      const existing = order?.lines.find((line) => line.itemId === item.id);
-      if (existing) {
-        pulseLine(existing.id);
-        return;
-      }
-      void cart.addItem(item.id, 1).then((added) => {
-        if (added && searching) {
+      void cart.addItem(item.id, 1).then((next) => {
+        if (!next) {
+          return;
+        }
+        if (searching) {
           setQuery('');
+        }
+        const newest = [...next.lines].reverse().find((line) => line.itemId === item.id);
+        if (newest) {
+          requestAnimationFrame(() => pulseLine(newest.id));
         }
       });
     },
-    [cart, order?.lines, pulseLine, searching],
+    [cart, pulseLine, searching],
   );
 
-  const onAdjustQuantity = useCallback(
-    (lineId: string, nextQuantity: number) => {
+  const onRemoveLine = useCallback(
+    (line: OrderLine) => {
       setFormError(null);
-      void cart.setQuantity(lineId, Math.max(0, nextQuantity));
+      const names = itemNames(line, i18n.language);
+      const title = t('billing.removeLineTitle');
+      const body = t('billing.removeLineBody', { name: names.primary });
+      const remove = () => {
+        void cart.setQuantity(line.id, 0);
+      };
+
+      // RN Alert button callbacks are unreliable on web — use window.confirm there.
+      if (Platform.OS === 'web') {
+        if (typeof globalThis !== 'undefined' && globalThis.confirm(`${title}\n\n${body}`)) {
+          remove();
+        }
+        return;
+      }
+
+      Alert.alert(title, body, [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('billing.removeLine'), style: 'destructive', onPress: remove },
+      ]);
     },
-    [cart],
+    [cart, i18n.language, t],
   );
 
   const onCancel = useCallback(() => {
@@ -145,7 +157,10 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
       return;
     }
     const matches = filterOrderCatalog(cart.items, section, trimmed);
-    const exact = matches.find((item) => item.itemCode.toLowerCase() === trimmed.toLowerCase());
+    const exact = matches.find(
+      (item) =>
+        String(item.serialNo) === trimmed || item.itemCode.toLowerCase() === trimmed.toLowerCase(),
+    );
     if (exact) {
       onPickCatalogItem(exact);
       return;
@@ -162,14 +177,10 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
       return;
     }
     try {
-      const result = await billing.collectAndClose(order.id, payment);
-      if (result.share === 'shared') {
-        leaveScreen(parent);
-        return;
-      }
-      cart.remember(result.order);
+      const closed = await billing.collectAndClose(order.id, payment);
+      cart.remember(closed);
+      setShareNotice(null);
       setPaymentOpen(false);
-      setShareNotice(result.share === 'downloaded' ? 'downloaded' : 'failed');
     } catch {
       setPaymentOpen(true);
     }
@@ -270,42 +281,76 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                     })}
                   </View>
 
-                  <View className="mt-2 h-11 flex-row items-center rounded-lg border border-line bg-surface px-3">
-                    <Ionicons name="search" size={18} color={palette.muted} />
-                    <TextInput
-                      value={query}
-                      onChangeText={(value) => {
-                        setQuery(value);
-                        setFormError(null);
-                      }}
-                      onSubmitEditing={() => {
-                        void onSearchSubmit();
-                      }}
-                      returnKeyType="search"
-                      placeholder={t('billing.searchPlaceholder')}
-                      placeholderTextColor={palette.muted}
-                      autoCorrect={false}
-                      autoCapitalize="characters"
-                      className="mx-2 h-11 min-w-0 flex-1 py-0 text-base text-ink"
-                    />
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={t('billing.voiceSearch')}
-                      onPress={() => {
-                        if (!voice.supported) {
-                          Alert.alert(t('billing.voiceUnavailableTitle'), t('billing.voiceUnavailableBody'));
-                          return;
-                        }
-                        voice.toggle();
-                      }}
-                      className={`h-8 w-8 items-center justify-center rounded-md ${voice.listening ? 'bg-accent' : ''}`}
-                    >
-                      <Ionicons
-                        name={voice.listening ? 'mic' : 'mic-outline'}
-                        size={18}
-                        color={voice.listening ? palette.accentInk : palette.ink}
+                  <View className="mt-2 overflow-hidden rounded-lg border border-line bg-surface">
+                    <View className="h-11 flex-row items-center px-3">
+                      <Ionicons name="search" size={18} color={palette.muted} />
+                      <TextInput
+                        value={query}
+                        onChangeText={(value) => {
+                          setQuery(value);
+                          setFormError(null);
+                        }}
+                        onSubmitEditing={() => {
+                          void onSearchSubmit();
+                        }}
+                        returnKeyType="search"
+                        placeholder={t('billing.searchPlaceholder')}
+                        placeholderTextColor={palette.muted}
+                        autoCorrect={false}
+                        autoCapitalize="characters"
+                        className="mx-2 h-11 min-w-0 flex-1 py-0 text-base text-ink"
                       />
-                    </Pressable>
+                      {query.length > 0 ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={t('common.cancel')}
+                          onPress={() => {
+                            setQuery('');
+                            setFormError(null);
+                          }}
+                          className="mr-1 h-8 w-8 items-center justify-center rounded-md"
+                        >
+                          <Ionicons name="close-circle" size={18} color={palette.muted} />
+                        </Pressable>
+                      ) : null}
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={t('billing.voiceSearch')}
+                        onPress={() => {
+                          if (!voice.supported) {
+                            Alert.alert(t('billing.voiceUnavailableTitle'), t('billing.voiceUnavailableBody'));
+                            return;
+                          }
+                          voice.toggle();
+                        }}
+                        className={`h-8 w-8 items-center justify-center rounded-md ${voice.listening ? 'bg-accent' : ''}`}
+                      >
+                        <Ionicons
+                          name={voice.listening ? 'mic' : 'mic-outline'}
+                          size={18}
+                          color={voice.listening ? palette.accentInk : palette.ink}
+                        />
+                      </Pressable>
+                    </View>
+
+                    {searching ? (
+                      <View className="border-t border-line">
+                        {searchMatches.length === 0 ? (
+                          <Text className="px-3 py-2.5 text-sm text-muted">{t('billing.pickerEmpty')}</Text>
+                        ) : (
+                          searchMatches.map((item, index) => (
+                            <SearchMatchRow
+                              key={item.id}
+                              item={item}
+                              language={i18n.language}
+                              busy={busy}
+                              showDivider={index < searchMatches.length - 1}
+                              onAdd={() => onPickCatalogItem(item)}
+                            />
+                          ))
+                        )}
+                      </View>
+                    ) : null}
                   </View>
                 </View>
               ) : null}
@@ -317,7 +362,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
               ) : null}
 
               <Text className="mb-1.5 mt-3 text-xs font-semibold uppercase tracking-wide text-muted">
-                {t('billing.currentOrder')}
+                {serveCount > 0 ? t('billing.currentOrderCount', { count: serveCount }) : t('billing.currentOrder')}
               </Text>
               {displayLines.length === 0 ? <Text className="py-1 text-sm text-muted">{t('billing.empty')}</Text> : null}
               <View
@@ -340,54 +385,19 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                       busy={busy}
                       focused={focusLineId === line.id}
                       showDivider={index < displayLines.length - 1}
-                      onDecrease={() => onAdjustQuantity(line.id, line.quantity - 1)}
-                      onIncrease={() => onAdjustQuantity(line.id, line.quantity + 1)}
+                      onRemove={() => onRemoveLine(line)}
                     />
                   </View>
                 ))}
               </View>
 
-              {editable ? (
-                <View className="mt-3">
-                  <Text className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
-                    {searching ? t('billing.searchResults') : t('billing.topSellers')}
-                  </Text>
-                  {addItems.length === 0 ? (
-                    <Text className="py-2 text-sm text-muted">
-                      {searching ? t('billing.pickerEmpty') : t('billing.quickAddEmpty')}
-                    </Text>
-                  ) : searching ? (
-                    <View className="overflow-hidden rounded-xl border border-line bg-surface">
-                      {addItems.map((item, index) => (
-                        <CompactCatalogRow
-                          key={item.id}
-                          item={item}
-                          language={i18n.language}
-                          busy={busy}
-                          showDivider={index < addItems.length - 1}
-                          onPress={() => onPickCatalogItem(item)}
-                        />
-                      ))}
-                    </View>
-                  ) : (
-                    <View className="flex-row flex-wrap justify-between gap-y-2">
-                      {addItems.map((item) => (
-                        <QuickAddTile
-                          key={item.id}
-                          item={item}
-                          language={i18n.language}
-                          busy={busy}
-                          onPress={() => onPickCatalogItem(item)}
-                        />
-                      ))}
-                    </View>
-                  )}
-                </View>
-              ) : null}
             </ScrollView>
           )}
 
-          <View className="border-t border-line bg-surface px-4 py-3">
+          <View
+            className="border-t border-line bg-surface px-4 pt-3"
+            style={{ paddingBottom: bottomInset + 12 }}
+          >
             {editable ? (
               <View className="flex-row gap-3">
                 <Pressable
@@ -420,7 +430,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                 <ActionRow
                   className=""
                   leading={{
-                    label: t('common.cancel'),
+                    label: t('billing.done'),
                     onPress: () => leaveScreen(parent),
                   }}
                   middle={{
@@ -455,6 +465,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
             totalAmount={order.totalAmount}
             submitting={billing.isSubmitting}
             errorCode={billing.errorCode}
+            confirmLabel={target.kind === 'counter' ? t('billing.closeCounter') : t('billing.closeTable')}
             onClose={() => {
               if (!billing.isSubmitting) {
                 setPaymentOpen(false);
@@ -498,8 +509,7 @@ function CompactOrderRow({
   busy,
   focused,
   showDivider,
-  onDecrease,
-  onIncrease,
+  onRemove,
 }: {
   line: OrderLine;
   language: string;
@@ -507,8 +517,7 @@ function CompactOrderRow({
   busy: boolean;
   focused: boolean;
   showDivider: boolean;
-  onDecrease: () => void;
-  onIncrease: () => void;
+  onRemove: () => void;
 }) {
   const { t } = useTranslation();
   const { palette } = useTheme();
@@ -522,14 +531,16 @@ function CompactOrderRow({
       pulse.setValue(0);
       return;
     }
+    // Native driver is unavailable on web (no RCTAnimation); JS driver is fine for this short pulse.
+    const useNativeDriver = Platform.OS !== 'web';
     Animated.sequence([
-      Animated.timing(pulse, { toValue: 1, duration: 120, useNativeDriver: true }),
-      Animated.timing(pulse, { toValue: 0, duration: 520, useNativeDriver: true }),
+      Animated.timing(pulse, { toValue: 1, duration: 120, useNativeDriver }),
+      Animated.timing(pulse, { toValue: 0, duration: 520, useNativeDriver }),
     ]).start();
   }, [focused, pulse]);
 
   return (
-    <View className={`relative px-3 py-2 ${showDivider ? 'border-b border-line' : ''}`}>
+    <View className={`relative px-3 py-2.5 ${showDivider ? 'border-b border-line' : ''}`}>
       <Animated.View
         pointerEvents="none"
         style={{
@@ -545,51 +556,39 @@ function CompactOrderRow({
           </Text>
           <Text className="text-xs text-muted" numberOfLines={1}>
             {t(volume.key, volume.values)}
+            {line.quantity > 1 ? ` · ×${line.quantity}` : ''}
           </Text>
         </View>
-        {editable ? (
-          <View className="flex-row items-center gap-1">
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={t('billing.decrease')}
-              disabled={busy}
-              onPress={onDecrease}
-              className="h-8 w-8 items-center justify-center rounded-md border border-line bg-canvas"
-            >
-              <Text className="text-base font-bold text-ink">−</Text>
-            </Pressable>
-            <Text className="min-w-6 text-center text-sm font-bold text-ink">{line.quantity}</Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={t('billing.increase')}
-              disabled={busy}
-              onPress={onIncrease}
-              className="h-8 w-8 items-center justify-center rounded-md border border-line bg-canvas"
-            >
-              <Text className="text-base font-bold text-ink">+</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <Text className="text-xs text-muted">×{line.quantity}</Text>
-        )}
         <Text className="min-w-[72px] text-right text-sm font-bold text-ink">{formatInr(lineTotal)}</Text>
+        {editable ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('billing.removeLine')}
+            disabled={busy}
+            onPress={onRemove}
+            hitSlop={8}
+            className="h-9 w-9 items-center justify-center rounded-md border border-line bg-canvas"
+          >
+            <Ionicons name="trash-outline" size={18} color={palette.danger} />
+          </Pressable>
+        ) : null}
       </View>
     </View>
   );
 }
 
-function CompactCatalogRow({
+function SearchMatchRow({
   item,
   language,
   busy,
   showDivider,
-  onPress,
+  onAdd,
 }: {
   item: StockItem;
   language: string;
   busy: boolean;
   showDivider: boolean;
-  onPress: () => void;
+  onAdd: () => void;
 }) {
   const { t } = useTranslation();
   const names = itemNames(item, language);
@@ -597,61 +596,25 @@ function CompactCatalogRow({
   const out = item.currentStock <= 0;
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      disabled={busy || out}
-      onPress={onPress}
-      className={`flex-row items-center gap-2 px-3 py-2.5 disabled:opacity-50 ${showDivider ? 'border-b border-line' : ''}`}
-    >
+    <View className={`flex-row items-center gap-2 px-3 py-2 ${showDivider ? 'border-b border-line' : ''}`}>
       <View className="min-w-0 flex-1">
         <Text className="text-sm font-bold text-ink" numberOfLines={1}>
-          {item.itemCode} • {names.primary}
+          #{item.serialNo} · {item.itemCode} · {names.primary}
         </Text>
         <Text className="text-xs text-muted" numberOfLines={1}>
-          {t(volume.key, volume.values)}
+          {t(volume.key, volume.values)} · {formatInr(item.sellingPrice)}
           {out ? ` · ${t('billing.out')}` : ''}
         </Text>
       </View>
-      <Text className="text-sm font-semibold text-accent">{formatInr(item.sellingPrice)}</Text>
-    </Pressable>
-  );
-}
-
-function QuickAddTile({
-  item,
-  language,
-  busy,
-  onPress,
-}: {
-  item: StockItem;
-  language: string;
-  busy: boolean;
-  onPress: () => void;
-}) {
-  const { t } = useTranslation();
-  const names = itemNames(item, language);
-  const volume = volumeMessage(item);
-  const out = item.currentStock <= 0;
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      disabled={busy || out}
-      onPress={onPress}
-      className="w-[48%] rounded-xl border border-line bg-surface px-2.5 py-2 disabled:opacity-50"
-    >
-      <Text className="text-xs font-bold text-ink" numberOfLines={1}>
-        {item.itemCode}
-      </Text>
-      <Text className="mt-0.5 text-xs text-ink" numberOfLines={1}>
-        {names.primary}
-      </Text>
-      <View className="mt-1 flex-row items-center justify-between gap-1">
-        <Text className="min-w-0 flex-1 text-[11px] text-muted" numberOfLines={1}>
-          {t(volume.key, volume.values)}
-        </Text>
-        <Text className="text-xs font-semibold text-accent">{formatInr(item.sellingPrice)}</Text>
-      </View>
-    </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={t('billing.add')}
+        disabled={busy || out}
+        onPress={onAdd}
+        className="h-9 min-w-[64px] items-center justify-center rounded-md bg-accent px-3 disabled:opacity-50"
+      >
+        <Text className="text-sm font-semibold text-accent-ink">{t('billing.add')}</Text>
+      </Pressable>
+    </View>
   );
 }

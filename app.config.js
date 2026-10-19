@@ -49,6 +49,7 @@ module.exports = {
     'expo-sqlite',
     'expo-status-bar',
     'expo-sharing',
+    '@react-native-community/datetimepicker',
     [
       'expo-speech-recognition',
       {
@@ -62,6 +63,7 @@ module.exports = {
   },
   android: {
     package: 'com.liqueurlog.app',
+    permissions: ['android.permission.RECORD_AUDIO'],
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',
       backgroundColor: '#000000',

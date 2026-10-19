@@ -109,7 +109,7 @@ function ItemRow({ item, language }: { item: StockItem; language: string }) {
           {name}
         </Text>
         <Text className="mt-0.5 text-[13px] text-muted" numberOfLines={1}>
-          {item.itemCode} · {t(volume.key, volume.values)}
+          #{item.serialNo} · {item.itemCode} · {t(volume.key, volume.values)}
         </Text>
       </View>
       <Ionicons name="chevron-forward" size={18} color={palette.muted} />

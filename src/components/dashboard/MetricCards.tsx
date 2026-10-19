@@ -25,13 +25,15 @@ export function MetricCards({ snapshot }: { snapshot: DashboardSnapshot }) {
   return (
     <View className="gap-3">
       <View className="flex-row gap-3">
-        <MetricCard
-          tone="orange"
-          icon="wallet-outline"
-          label={t('home.totalRevenue')}
-          value={formatInr(snapshot.todaySales)}
-          subtext={t('home.thisMonthAmount', { amount: formatInr(snapshot.monthSales) })}
-        />
+        <View className="min-w-0 flex-1">
+          <MetricCard
+            tone="orange"
+            icon="wallet-outline"
+            label={t('home.totalRevenue')}
+            value={formatInr(snapshot.todaySales)}
+            subtext={t('home.thisMonthAmount', { amount: formatInr(snapshot.monthSales) })}
+          />
+        </View>
         <Pressable className="min-w-0 flex-1" onPress={() => router.push('/table/history')}>
           <MetricCard
             tone="purple"
@@ -100,7 +102,7 @@ function MetricCard({
     subtextTone === 'danger' ? 'text-danger' : subtextTone === 'idle' ? 'text-idle' : 'text-muted';
 
   return (
-    <View className="min-w-0 flex-1 rounded-2xl border border-line bg-surface p-3.5" style={getCardShadow(palette)}>
+    <View className="w-full rounded-2xl border border-line bg-surface p-3.5" style={getCardShadow(palette)}>
       <View
         className="mb-3 h-10 w-10 items-center justify-center rounded-2xl"
         style={{ backgroundColor: colors.iconBg }}

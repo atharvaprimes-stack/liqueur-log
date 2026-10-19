@@ -1,11 +1,12 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-import { isUniqueConstraintError, withDatabase, withLockedTransaction } from '../local/database';
-import { requestSync, syncNow } from '../sync/engine';
-import { enqueueDelete, enqueueUpsert } from '../sync/outbox';
 import { formatOrderSequence, lineTotalPaise, localDateKey, nextSequenceValue, readSequenceTail, sequenceSearchNeedle } from '../../domain/billing';
 import { OrderValidationError } from '../../domain/errors';
+import { newId } from '../../security/id';
+import { isUniqueConstraintError, withDatabase, withLockedTransaction } from '../local/database';
 import { normalizeTableCount } from '../local/rows';
+import { requestSync, syncNow } from '../sync/engine';
+import { enqueueDelete, enqueueUpsert } from '../sync/outbox';
 import {
   isOrderStatus,
   isOrderType,
@@ -223,24 +224,20 @@ export async function addOrderItem(input: {
     await assertActor(database, input.tenantId, input.actorId);
     const order = await requireOpenOrder(database, input.tenantId, input.orderId);
     const item = await findItem(database, input.tenantId, input);
-    const existing = await database.getFirstAsync<{ id: string; quantity: number }>(
-      'SELECT id, quantity FROM order_items WHERE order_id = ? AND item_id = ?',
-      [order.id, item.id],
-    );
+    if (item.current_stock < input.quantity) {
+      throw new OrderValidationError('stock');
+    }
 
-    if (existing) {
-      await setLineQuantity(database, input.tenantId, order.id, existing.id, existing.quantity + input.quantity);
-    } else {
-      if (item.current_stock < input.quantity) {
-        throw new OrderValidationError('stock');
-      }
-      await applyStockDelta(database, input.tenantId, item.id, -input.quantity);
+    // Each unit is its own row so staff can void one serve without editing shared qty.
+    await applyStockDelta(database, input.tenantId, item.id, -input.quantity);
+    const unitPrice = Math.round(item.selling_price * 100) / 100;
+    for (let index = 0; index < input.quantity; index += 1) {
       await database.runAsync(
         `INSERT INTO order_items (
            id, order_id, item_id, item_code, name_en, name_mr, liquor_type, volume_ml, quantity, unit_price
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          crypto.randomUUID(),
+          newId(),
           order.id,
           item.id,
           item.item_code,
@@ -248,8 +245,8 @@ export async function addOrderItem(input: {
           item.name_mr,
           item.liquor_type,
           item.volume_ml,
-          input.quantity,
-          Math.round(item.selling_price * 100) / 100,
+          1,
+          unitPrice,
         ],
       );
     }
@@ -401,7 +398,7 @@ async function insertOrder(
   database: SQLiteDatabase,
   input: { tenantId: string; actorId: string; tableId: string | null; orderType: 'TABLE' | 'COUNTER' },
 ): Promise<string> {
-  const orderId = crypto.randomUUID();
+  const orderId = newId();
   const createdAt = Date.now();
   const sequence = await allocateOrderSequence(database, input.tenantId, createdAt);
     await database.runAsync(
@@ -677,7 +674,7 @@ async function insertActivity(
     detail: Record<string, string | number>;
   },
 ): Promise<void> {
-  const id = crypto.randomUUID();
+  const id = newId();
   await database.runAsync(
     `INSERT INTO activity_logs (
        id, tenant_id, actor_id, action, entity, entity_id, detail, created_at

@@ -222,7 +222,7 @@ async function readRecord(
   }
 
   const tables: Record<string, string> = {
-    items: `SELECT id, tenant_id, item_code, name_en, name_mr, brand, liquor_type, sub_type,
+    items: `SELECT id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
               volume_ml, purchase_price, selling_price, low_stock_threshold, updated_at
        FROM items WHERE id = ? AND tenant_id = ?`,
     item_types: 'SELECT id, tenant_id, name, sort_order, updated_at FROM item_types WHERE id = ? AND tenant_id = ?',

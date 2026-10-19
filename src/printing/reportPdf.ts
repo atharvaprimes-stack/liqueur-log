@@ -41,7 +41,9 @@ export async function buildReportPdf(sheet: ReportSheet): Promise<{ bytes: Uint8
   };
 
   paintHeader(painter);
-  paintSummary(painter);
+  if (sheet.summaryLeft.length > 0 || sheet.summaryRight.length > 0) {
+    paintSummary(painter);
+  }
   paintTable(painter, sheet.table);
   paintFootnote(painter);
   paintPageNumbers(painter);
@@ -151,7 +153,8 @@ function paintTable(painter: Painter, table: SheetTable): void {
 
 function groupLead(painter: Painter, group: SheetGroup): number {
   const firstBand = group.bands[0];
-  return 18 + noteBlockHeight(painter, group.note) + (firstBand?.title ? 16 : 0) + 16;
+  const heading = group.title || group.note ? 18 + noteBlockHeight(painter, group.note) : 0;
+  return heading + (firstBand?.title ? 16 : 0) + 16;
 }
 
 function paintGroup(painter: Painter, columns: SheetColumn[], group: SheetGroup): void {
@@ -167,12 +170,16 @@ function paintGroup(painter: Painter, columns: SheetColumn[], group: SheetGroup)
   for (const band of group.bands) {
     paintBandRows(painter, columns, group, band);
   }
-  ensure(painter, 17, heading);
-  paintCells(painter, columns, group.total, 17, 8, true);
+  if (group.total) {
+    ensure(painter, 17, heading);
+    paintCells(painter, columns, group.total, 17, 8, true);
+  }
 }
 
 function paintDateBand(painter: Painter, group: SheetGroup): void {
-  paintBand(painter, group.title, 18, BAND, 9, INK, true);
+  if (group.title) {
+    paintBand(painter, group.title, 18, BAND, 9, INK, true);
+  }
   if (group.note) {
     paintNote(painter, group.note);
   }

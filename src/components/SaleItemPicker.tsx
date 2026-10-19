@@ -76,7 +76,9 @@ export function SaleItemPicker({ visible, items, onClose, onPick }: SaleItemPick
                 >
                   <View className="flex-row items-start justify-between gap-3">
                     <View className="min-w-0 flex-1">
-                      <Text className="text-lg font-bold text-ink">{item.itemCode}</Text>
+                      <Text className="text-lg font-bold text-ink">
+                        #{item.serialNo} · {item.itemCode}
+                      </Text>
                       <Text className="mt-1 text-sm text-ink" numberOfLines={1}>
                         {names.primary}
                       </Text>

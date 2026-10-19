@@ -2,20 +2,22 @@ import { useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
-import { ActionRow } from '../../../src/components/FormActions';
 import { orderErrorCode, type OrderErrorCode } from '../../../src/domain/errors';
 import { formatInr } from '../../../src/domain/money';
 import type { FloorTable } from '../../../src/domain/models/orders';
 import { useFloor } from '../../../src/hooks/useFloor';
+import { resolveBottomInset } from '../../../src/navigation/bottomInset';
 import { useTheme } from '../../../src/theme/theme-context';
 import type { ThemeId } from '../../../src/theme/themes';
 
 export default function TablesScreen() {
   const { t } = useTranslation();
   const { palette, themeStyle } = useTheme();
+  const insets = useSafeAreaInsets();
+  const bottomInset = resolveBottomInset(insets.bottom);
   const { tables, counter, isLoading, errorCode, startTable } = useFloor();
   const [pending, setPending] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -87,32 +89,69 @@ export default function TablesScreen() {
           </Pressable>
         </ScrollView>
       )}
-      <Modal visible={pending !== null} animationType="fade" onRequestClose={() => !starting && setPending(null)}>
-        <View style={themeStyle} className="flex-1 bg-canvas">
-          <SafeAreaView className="flex-1 justify-center px-6">
-            <Text className="text-center text-5xl font-bold text-ink">{pending}</Text>
-            <Text className="mt-4 text-center text-title font-semibold text-ink">{t('tables.startTitle')}</Text>
-            <Text className="mt-2 text-center text-body text-muted">{t('tables.startBody', { number: pending ?? '' })}</Text>
+      <Modal
+        visible={pending !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (!starting) {
+            setPending(null);
+          }
+        }}
+      >
+        <View style={themeStyle} className="flex-1 justify-end">
+          <Pressable
+            accessibilityRole="button"
+            className="flex-1 bg-black/50"
+            disabled={starting}
+            onPress={() => setPending(null)}
+          />
+          <View
+            className="rounded-t-3xl border-t border-line bg-surface px-4 pt-4"
+            style={{ paddingBottom: bottomInset + 16 }}
+          >
+            <View className="mb-4 h-1.5 w-12 self-center rounded-full bg-line" />
+
+            <View className="self-center rounded-full bg-accent/15 px-4 py-1.5">
+              <Text className="text-sm font-semibold text-accent">
+                {t('billing.tableTitle', { number: pending ?? '' })}
+              </Text>
+            </View>
+
+            <Text className="mt-4 text-center text-xl font-bold text-ink">{t('tables.startTitle')}</Text>
+            <Text className="mt-1.5 text-center text-sm text-muted">
+              {t('tables.startBody', { number: pending ?? '' })}
+            </Text>
+
             {startError ? (
-              <Text className="mt-4 text-center text-sm text-danger">{t(`billing.errors.${startError}`)}</Text>
+              <Text className="mt-3 text-center text-sm text-danger">{t(`billing.errors.${startError}`)}</Text>
             ) : null}
-            <ActionRow
-              className="mt-8"
-              leading={{
-                label: t('tables.startCancel'),
-                onPress: () => setPending(null),
-                disabled: starting,
-              }}
-              trailing={{
-                label: t('tables.startConfirm'),
-                onPress: () => {
+
+            <View className="mt-6 flex-row gap-3">
+              <Pressable
+                accessibilityRole="button"
+                disabled={starting}
+                onPress={() => setPending(null)}
+                className="h-14 min-w-0 flex-1 items-center justify-center rounded-xl border border-line bg-canvas disabled:opacity-50"
+              >
+                <Text className="text-base font-semibold text-muted">{t('tables.startCancel')}</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={starting}
+                onPress={() => {
                   void confirmStart();
-                },
-                tone: 'accent',
-                busy: starting,
-              }}
-            />
-          </SafeAreaView>
+                }}
+                className="h-14 min-w-0 flex-1 items-center justify-center rounded-xl bg-accent disabled:opacity-50"
+              >
+                {starting ? (
+                  <ActivityIndicator color={palette.accentInk} />
+                ) : (
+                  <Text className="text-base font-bold text-accent-ink">{t('tables.startConfirm')}</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
         </View>
       </Modal>
     </ScreenWrapper>

@@ -149,6 +149,7 @@ export function ItemPickerModal({ visible, items, existingItemIds, onClose, onAd
                     </View>
                     <View className="min-w-0 flex-1">
                       <View className="flex-row items-center gap-2">
+                        <Text className="text-sm font-bold text-muted">#{item.serialNo}</Text>
                         <Text className="text-sm font-bold text-accent">{item.itemCode}</Text>
                         {onBill ? (
                           <Text className="rounded bg-canvas px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted">

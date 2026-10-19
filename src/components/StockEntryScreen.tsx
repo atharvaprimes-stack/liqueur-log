@@ -21,7 +21,6 @@ import { SupplierPicker } from './SupplierPicker';
 import { useAuth } from '../context/AuthContext';
 import { inventoryErrorCode } from '../domain/errors';
 import {
-  itemNames,
   PAYMENT_TYPES,
   summarizeDraft,
   type DraftLine,
@@ -67,7 +66,7 @@ function parseItemIdParams(value: string | string[] | undefined): string[] {
 }
 
 export function StockEntryScreen() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const { palette } = useTheme();
   const { currentUser, isReady } = useAuth();
   const { items, isLoading, errorCode, savePurchase } = useInventory();
@@ -378,7 +377,6 @@ export function StockEntryScreen() {
                       key={line.itemId}
                       item={item}
                       line={line}
-                      language={i18n.language}
                       showDivider={index < lines.length - 1}
                       onChange={updateLine}
                       onRemove={() => removeLine(line.itemId)}
@@ -473,36 +471,35 @@ export function StockEntryScreen() {
   );
 }
 
+const COMPACT_INPUT_STYLE = {
+  paddingVertical: 0,
+  textAlignVertical: 'center' as const,
+};
+
 function ItemTableRow({
   item,
   line,
-  language,
   showDivider,
   onChange,
   onRemove,
 }: {
   item: StockItem;
   line: DraftLine;
-  language: string;
   showDivider: boolean;
   onChange: (itemId: string, patch: Partial<DraftLine>) => void;
   onRemove: () => void;
 }) {
   const { t } = useTranslation();
   const { palette } = useTheme();
-  const names = itemNames(item, language);
   const quantity = parseQuantity(line.quantity);
   const paise = parseRupeeToPaise(line.unitPrice);
   const linePaise = quantity !== null && paise !== null ? quantity * paise : null;
 
   return (
     <View className={`flex-row items-center gap-2 px-3 py-2.5 ${showDivider ? 'border-b border-line' : ''}`}>
-      <View className="min-w-0 flex-[1.6]">
-        <Text className="text-xs font-bold text-accent" numberOfLines={1}>
+      <View className="min-w-0 flex-[1.6] justify-center">
+        <Text className="text-sm font-bold text-ink" numberOfLines={1}>
           {item.itemCode}
-        </Text>
-        <Text className="text-sm font-semibold text-ink" numberOfLines={1}>
-          {names.primary}
         </Text>
       </View>
       <TextInput
@@ -512,7 +509,9 @@ function ItemTableRow({
         placeholder="0"
         placeholderTextColor={palette.muted}
         accessibilityLabel={t('stock.purchase.quantity')}
-        className="h-10 w-14 rounded-lg border border-line bg-canvas px-1 text-center text-sm text-ink"
+        includeFontPadding={false}
+        className="h-11 w-14 rounded-lg border border-line bg-canvas px-1 text-center text-sm text-ink"
+        style={COMPACT_INPUT_STYLE}
       />
       <TextInput
         value={line.unitPrice}
@@ -521,7 +520,9 @@ function ItemTableRow({
         placeholder="0"
         placeholderTextColor={palette.muted}
         accessibilityLabel={t('stock.purchase.cost')}
-        className="h-10 w-[72px] rounded-lg border border-line bg-canvas px-1 text-center text-sm text-ink"
+        includeFontPadding={false}
+        className="h-11 w-[72px] rounded-lg border border-line bg-canvas px-1 text-center text-sm text-ink"
+        style={COMPACT_INPUT_STYLE}
       />
       <Text className="w-[72px] text-right text-sm font-semibold text-ink" numberOfLines={1}>
         {linePaise === null ? '—' : formatInrFromPaise(linePaise)}
@@ -531,7 +532,7 @@ function ItemTableRow({
         accessibilityLabel={t('stock.purchase.remove')}
         onPress={onRemove}
         hitSlop={6}
-        className="h-10 w-8 items-center justify-center"
+        className="h-11 w-8 items-center justify-center"
       >
         <Ionicons name="trash-outline" size={18} color={palette.danger} />
       </Pressable>

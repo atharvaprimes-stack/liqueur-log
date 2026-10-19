@@ -20,6 +20,7 @@ export type MovementRow = {
   quantity: number;
   amount: number;
   unitPaise: number;
+  staffName: string;
 };
 
 export type SalesDayRow = {
@@ -62,6 +63,7 @@ export type ReportItem = {
   volumeMl: number;
   quantity: number;
   amountPaise: number;
+  staffName: string;
 };
 
 export type PurchaseInvoice = {
@@ -171,7 +173,7 @@ export type SheetGroup = {
   title: string;
   note: string | null;
   bands: SheetBand[];
-  total: SheetCell[];
+  total: SheetCell[] | null;
 };
 
 export type SheetTable = {
@@ -214,12 +216,21 @@ type Translate = (key: string, values?: Record<string, string | number>) => stri
 const MAX_SPAN_MS = 366 * 24 * 60 * 60 * 1000;
 const DATE_KEY = /^(\d{4})-(\d{2})-(\d{2})$/;
 
-const LINE_COLUMNS = (t: Translate): SheetColumn[] => [
+const PURCHASE_COLUMNS = (t: Translate): SheetColumn[] => [
   { text: t('reports.item'), align: 'left', width: 0.4 },
   { text: t('reports.volume'), align: 'left', width: 0.14 },
   { text: t('reports.qty'), align: 'right', width: 0.1 },
   { text: t('reports.rate'), align: 'right', width: 0.16 },
   { text: t('reports.amount'), align: 'right', width: 0.2 },
+];
+
+const SALES_COLUMNS = (t: Translate): SheetColumn[] => [
+  { text: t('reports.item'), align: 'left', width: 0.3 },
+  { text: t('reports.volume'), align: 'left', width: 0.11 },
+  { text: t('reports.qty'), align: 'right', width: 0.08 },
+  { text: t('reports.rate'), align: 'right', width: 0.13 },
+  { text: t('reports.amount'), align: 'right', width: 0.16 },
+  { text: t('reports.soldBy'), align: 'left', width: 0.22 },
 ];
 
 const STOCK_COLUMNS = (t: Translate): SheetColumn[] => [
@@ -354,7 +365,8 @@ export function presentReport(report: BusinessReport, kind: ReportKind, t: Trans
       : kind === 'purchases'
         ? 'reports.purchaseFootnote'
         : 'reports.stockFootnote';
-  const columns = kind === 'stock' ? STOCK_COLUMNS(t) : LINE_COLUMNS(t);
+  const columns =
+    kind === 'stock' ? STOCK_COLUMNS(t) : kind === 'sales' ? SALES_COLUMNS(t) : PURCHASE_COLUMNS(t);
 
   return {
     fileName: reportFileName(kind, report.from, report.until),
@@ -395,24 +407,11 @@ export function reportFileName(kind: ReportKind, from: number, until: number): s
 }
 
 function salesSummaryLeft(report: BusinessReport, t: Translate): SummaryPair[] {
-  const sales = report.sales;
-  const pairs: SummaryPair[] = [
-    { label: t('reports.sales'), value: formatInrFromPaise(sales.salesPaise), strong: true },
-    { label: t('reports.cash'), value: formatInrFromPaise(sales.cashPaise) },
-    { label: t('reports.upi'), value: formatInrFromPaise(sales.upiPaise) },
-  ];
-  if (sales.otherPaise !== 0) {
-    pairs.push({ label: t('reports.other'), value: formatInrFromPaise(sales.otherPaise) });
-  }
-  pairs.push({ label: t('reports.credit'), value: formatInrFromPaise(sales.creditPaise) });
-  return pairs;
+  return [{ label: t('reports.sales'), value: formatInrFromPaise(report.sales.salesPaise), strong: true }];
 }
 
 function salesSummaryRight(report: BusinessReport, t: Translate): SummaryPair[] {
-  return [
-    { label: t('reports.bills'), value: String(report.sales.billCount), strong: true },
-    { label: t('reports.qtySold'), value: String(report.sales.quantity) },
-  ];
+  return [{ label: t('reports.bills'), value: String(report.sales.billCount), strong: true }];
 }
 
 function purchaseSummaryLeft(report: BusinessReport, t: Translate): SummaryPair[] {
@@ -457,16 +456,16 @@ function salesTable(report: BusinessReport, columns: SheetColumn[], t: Translate
 
   const groups = report.sales.days.map((day) => {
     const date = formatShortDate(day.day, t);
-    const rows = sortByName(day.lines, language).map((line) => lineCells(line, t, language));
+    const rows = sortByName(day.lines, language).map((line) => salesLineCells(line, t, language));
     const roundOff = day.salesPaise - day.linePaise;
     if (roundOff !== 0) {
-      rows.push(mutedRow(t('reports.roundOff'), formatInrFromPaise(roundOff)));
+      rows.push(salesMutedRow(t('reports.roundOff'), formatInrFromPaise(roundOff)));
     }
     return {
       title: date,
       note: salesDayNote(day, t),
       bands: [{ title: null, rows }],
-      total: totalCells(t('reports.groupTotal', { name: date }), day.quantity, day.salesPaise),
+      total: salesTotalCells(t('reports.groupTotal', { name: date }), day.quantity, day.salesPaise),
     };
   });
 
@@ -477,7 +476,7 @@ function salesTable(report: BusinessReport, columns: SheetColumn[], t: Translate
     extra: null,
     grand:
       groups.length > 1
-        ? totalCells(t('reports.total'), report.sales.quantity, report.sales.salesPaise)
+        ? salesTotalCells(t('reports.total'), report.sales.quantity, report.sales.salesPaise)
         : null,
     empty: null,
   };
@@ -499,17 +498,17 @@ function purchaseTable(report: BusinessReport, columns: SheetColumn[], t: Transl
     const date = formatShortDate(day.day, t);
     const bands: SheetBand[] = day.invoices.map((invoice) => ({
       title: `${invoice.supplierName}  ·  ${invoice.invoiceNumber}`,
-      rows: sortByName(invoice.lines, language).map((line) => lineCells(line, t, language)),
+      rows: sortByName(invoice.lines, language).map((line) => purchaseLineCells(line, t, language)),
     }));
     const roundOff = day.amountPaise - day.linePaise;
     if (roundOff !== 0) {
-      bands.push({ title: null, rows: [mutedRow(t('reports.roundOff'), formatInrFromPaise(roundOff))] });
+      bands.push({ title: null, rows: [purchaseMutedRow(t('reports.roundOff'), formatInrFromPaise(roundOff))] });
     }
     return {
       title: date,
       note: purchaseDayNote(day, t),
       bands,
-      total: totalCells(t('reports.groupTotal', { name: date }), day.quantity, day.amountPaise),
+      total: purchaseTotalCells(t('reports.groupTotal', { name: date }), day.quantity, day.amountPaise),
     };
   });
 
@@ -520,7 +519,7 @@ function purchaseTable(report: BusinessReport, columns: SheetColumn[], t: Transl
     extra: null,
     grand:
       groups.length > 1
-        ? totalCells(t('reports.total'), report.purchases.quantity, report.purchases.amountPaise)
+        ? purchaseTotalCells(t('reports.total'), report.purchases.quantity, report.purchases.amountPaise)
         : null,
     empty: null,
   };
@@ -607,7 +606,18 @@ function purchaseDayNote(day: PurchaseDay, t: Translate): string {
   return parts.join('   ·   ');
 }
 
-function lineCells(line: ReportItem, t: Translate, language: string): SheetCell[] {
+function salesLineCells(line: ReportItem, t: Translate, language: string): SheetCell[] {
+  return [
+    itemCell(line, language),
+    { text: volumeLabel(line, t) },
+    { text: String(line.quantity) },
+    { text: rateLabel(line) },
+    { text: formatInrFromPaise(line.amountPaise) },
+    { text: line.staffName.trim() || '—', tone: line.staffName.trim() ? undefined : 'muted' },
+  ];
+}
+
+function purchaseLineCells(line: ReportItem, t: Translate, language: string): SheetCell[] {
   return [
     itemCell(line, language),
     { text: volumeLabel(line, t) },
@@ -617,11 +627,33 @@ function lineCells(line: ReportItem, t: Translate, language: string): SheetCell[
   ];
 }
 
-function totalCells(label: string, quantity: number, amountPaise: number): SheetCell[] {
+function salesTotalCells(label: string, quantity: number, amountPaise: number): SheetCell[] {
+  return [
+    { text: label },
+    { text: '' },
+    { text: String(quantity) },
+    { text: '' },
+    { text: formatInrFromPaise(amountPaise) },
+    { text: '' },
+  ];
+}
+
+function purchaseTotalCells(label: string, quantity: number, amountPaise: number): SheetCell[] {
   return [{ text: label }, { text: '' }, { text: String(quantity) }, { text: '' }, { text: formatInrFromPaise(amountPaise) }];
 }
 
-function mutedRow(label: string, amount: string): SheetCell[] {
+function salesMutedRow(label: string, amount: string): SheetCell[] {
+  return [
+    { text: label, tone: 'muted' },
+    { text: '' },
+    { text: '' },
+    { text: '' },
+    { text: amount, tone: 'muted' },
+    { text: '' },
+  ];
+}
+
+function purchaseMutedRow(label: string, amount: string): SheetCell[] {
   return [
     { text: label, tone: 'muted' },
     { text: '' },
@@ -638,17 +670,17 @@ function rateLabel(line: ReportItem): string {
   return formatInrFromPaise(Math.round(line.amountPaise / line.quantity));
 }
 
-function sortByName<T extends { nameEn: string; nameMr: string; volumeMl: number; itemCode: string }>(
-  lines: T[],
-  language: string,
-): T[] {
+function sortByName<
+  T extends { nameEn: string; nameMr: string; volumeMl: number; itemCode: string; staffName?: string },
+>(lines: T[], language: string): T[] {
   return [...lines].sort((left, right) => {
     const leftName = itemNames(left, language).primary;
     const rightName = itemNames(right, language).primary;
     return (
       leftName.localeCompare(rightName, language, { sensitivity: 'base' }) ||
       left.volumeMl - right.volumeMl ||
-      left.itemCode.localeCompare(right.itemCode)
+      left.itemCode.localeCompare(right.itemCode) ||
+      (left.staffName ?? '').localeCompare(right.staffName ?? '', language, { sensitivity: 'base' })
     );
   });
 }
@@ -878,7 +910,8 @@ function mergeMovement(rows: MovementRow[]): ReportItem[] {
   for (const row of rows) {
     const quantity = Number.isFinite(row.quantity) ? row.quantity : 0;
     const amountPaise = rupeesToPaise(row.amount);
-    const key = `${row.itemId}\u0000${row.itemCode}\u0000${row.nameEn}\u0000${row.nameMr}\u0000${row.volumeMl}\u0000${row.unitPaise}`;
+    const staffName = row.staffName.trim();
+    const key = `${row.itemId}\u0000${row.itemCode}\u0000${row.nameEn}\u0000${row.nameMr}\u0000${row.volumeMl}\u0000${row.unitPaise}\u0000${staffName}`;
     const existing = merged.get(key);
     if (!existing) {
       merged.set(key, {
@@ -890,6 +923,7 @@ function mergeMovement(rows: MovementRow[]): ReportItem[] {
         volumeMl: row.volumeMl,
         quantity,
         amountPaise,
+        staffName,
       });
       continue;
     }

@@ -121,6 +121,7 @@ async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
 
   await configureConnection(database);
   await database.execAsync(LOCAL_SCHEMA_SQL);
+  await allowDuplicateOrderItemLines(database);
   await ensureTenantColumn(database, 'address', `ALTER TABLE tenants ADD COLUMN address TEXT NOT NULL DEFAULT ''`);
   await ensureTenantColumn(
     database,
@@ -135,6 +136,8 @@ async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
   await relaxItemTypeChecks(database);
   await relaxPurchasePaymentTypes(database);
   await ensureSyncColumns(database);
+  // After any items-table rebuilds: add + backfill serial numbers.
+  await ensureItemSerialNumbers(database);
   await assertSchemaReady(database);
 
   console.log('[sqlite] database ready', { path: database.databasePath });
@@ -180,17 +183,80 @@ async function ensureSyncColumns(database: SQLite.SQLiteDatabase): Promise<void>
   await ensureColumn(database, 'orders', 'updated_at', 'ALTER TABLE orders ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0');
 }
 
+/** Assign stable per-tenant serial numbers (1, 2, 3…) used in catalog search. */
+async function ensureItemSerialNumbers(database: SQLite.SQLiteDatabase): Promise<void> {
+  await database.execAsync('DROP INDEX IF EXISTS items_tenant_serial_no_idx');
+
+  if (!(await hasTableColumn(database, 'items', 'serial_no'))) {
+    // Prefer runAsync on web/WASM — execAsync has been flaky for single ALTERs.
+    await database.runAsync('ALTER TABLE items ADD COLUMN serial_no INTEGER NOT NULL DEFAULT 0');
+  }
+
+  if (!(await hasTableColumn(database, 'items', 'serial_no'))) {
+    throw new Error('SQLite migration failed: items.serial_no column is missing');
+  }
+
+  const needsBackfill = await database.getFirstAsync<{ id: string }>(
+    'SELECT id FROM items WHERE serial_no <= 0 LIMIT 1',
+  );
+  if (needsBackfill) {
+    const tenants = await database.getAllAsync<{ tenant_id: string }>(
+      'SELECT DISTINCT tenant_id FROM items',
+    );
+    for (const tenant of tenants) {
+      const rows = await database.getAllAsync<{ id: string }>(
+        `SELECT id FROM items
+         WHERE tenant_id = ?
+         ORDER BY item_code COLLATE NOCASE ASC, id ASC`,
+        [tenant.tenant_id],
+      );
+      for (let index = 0; index < rows.length; index += 1) {
+        await database.runAsync('UPDATE items SET serial_no = ? WHERE id = ?', [
+          index + 1,
+          rows[index].id,
+        ]);
+      }
+    }
+  }
+
+  await database.execAsync(
+    'CREATE UNIQUE INDEX IF NOT EXISTS items_tenant_serial_no_idx ON items (tenant_id, serial_no) WHERE serial_no > 0',
+  );
+}
+
+async function hasTableColumn(
+  database: SQLite.SQLiteDatabase,
+  table: string,
+  column: string,
+): Promise<boolean> {
+  const columns = await database.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
+  return columns.some((entry) => entry.name === column);
+}
+
 async function ensureColumn(
   database: SQLite.SQLiteDatabase,
   table: string,
   column: string,
   statement: string,
 ): Promise<void> {
-  const columns = await database.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
-  if (columns.some((entry) => entry.name === column)) {
+  if (await hasTableColumn(database, table, column)) {
     return;
   }
-  await database.execAsync(statement);
+  await database.runAsync(statement);
+}
+
+/** Existing DBs had a unique (order_id, item_id) index that merged serves; drop it. */
+async function allowDuplicateOrderItemLines(database: SQLite.SQLiteDatabase): Promise<void> {
+  const unique = await database.getFirstAsync<{ name: string }>(
+    `SELECT name FROM sqlite_master
+     WHERE type = 'index' AND name = 'order_items_order_item_idx' AND sql LIKE '%UNIQUE%'`,
+  );
+  if (unique?.name) {
+    await database.execAsync('DROP INDEX IF EXISTS order_items_order_item_idx');
+  }
+  await database.execAsync(
+    'CREATE INDEX IF NOT EXISTS order_items_order_item_idx ON order_items (order_id, item_id)',
+  );
 }
 
 async function relaxItemTypeChecks(database: SQLite.SQLiteDatabase): Promise<void> {
@@ -207,6 +273,7 @@ async function relaxItemTypeChecks(database: SQLite.SQLiteDatabase): Promise<voi
       CREATE TABLE items_next (
         id TEXT PRIMARY KEY NOT NULL,
         tenant_id TEXT NOT NULL,
+        serial_no INTEGER NOT NULL DEFAULT 0,
         item_code TEXT NOT NULL,
         name_en TEXT NOT NULL,
         name_mr TEXT NOT NULL,
@@ -218,15 +285,16 @@ async function relaxItemTypeChecks(database: SQLite.SQLiteDatabase): Promise<voi
         selling_price REAL NOT NULL CHECK (selling_price >= 0),
         current_stock INTEGER NOT NULL DEFAULT 0 CHECK (current_stock >= 0),
         low_stock_threshold INTEGER NOT NULL DEFAULT 0 CHECK (low_stock_threshold >= 0),
+        updated_at INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE
       );
       INSERT INTO items_next (
-        id, tenant_id, item_code, name_en, name_mr, brand, liquor_type, sub_type,
-        volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold
+        id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
+        volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
       )
       SELECT
-        id, tenant_id, item_code, name_en, name_mr, brand, liquor_type, sub_type,
-        volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold
+        id, tenant_id, 0, item_code, name_en, name_mr, brand, liquor_type, sub_type,
+        volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, 0
       FROM items;
       DROP TABLE items;
       ALTER TABLE items_next RENAME TO items;

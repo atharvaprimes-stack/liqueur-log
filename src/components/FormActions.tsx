@@ -2,6 +2,7 @@ import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { type Href } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
+import { useBottomInset } from '../navigation/bottomInset';
 import { leaveScreen } from '../navigation/leave';
 import { useTheme } from '../theme/theme-context';
 
@@ -28,6 +29,7 @@ export function ActionRow({
   className?: string;
   pinned?: boolean;
 }) {
+  const bottomInset = useBottomInset();
   const row = (
     <View className={`${pinned ? '' : className} flex-row gap-3`}>
       <ActionControl button={leading} />
@@ -40,7 +42,11 @@ export function ActionRow({
     return row;
   }
 
-  return <View className="border-t border-line bg-canvas px-4 py-3">{row}</View>;
+  return (
+    <View className="border-t border-line bg-canvas px-4 pt-3" style={{ paddingBottom: bottomInset + 12 }}>
+      {row}
+    </View>
+  );
 }
 
 export function SaveRow({

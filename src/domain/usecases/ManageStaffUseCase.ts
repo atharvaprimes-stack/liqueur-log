@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { useAuth } from '../../context/auth-context';
+import { newId } from '../../security/id';
 import { StaffAccessError, StaffValidationError } from '../errors';
 import { MOBILE_PATTERN, MPIN_PATTERN, type User, type UserRole } from '../models/auth';
 
@@ -86,7 +87,7 @@ export class ManageStaffUseCase {
     await this.assertMobileAvailable(mobileNumber);
 
     const record: StaffRecord = {
-      id: crypto.randomUUID(),
+      id: newId(),
       tenantId: this.actor.tenantId,
       mobileNumber,
       mpinHash: await this.gateway.hashMpin(mpin),

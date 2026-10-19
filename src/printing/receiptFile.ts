@@ -28,6 +28,23 @@ export async function printPdfDocument(bytes: Uint8Array, fileName: string): Pro
   await printReceiptPdf(await writePdfFile(bytes, fileName));
 }
 
+export async function savePdfDocument(
+  bytes: Uint8Array,
+  fileName: string,
+): Promise<'saved' | 'downloaded'> {
+  if (Platform.OS === 'web') {
+    downloadPdf(bytes, fileName);
+    return 'downloaded';
+  }
+  const destination = new ExpoFile(Paths.document, fileName);
+  if (destination.exists) {
+    destination.delete();
+  }
+  destination.create();
+  destination.write(bytes);
+  return 'saved';
+}
+
 export async function shareReceipt(receipt: ReceiptPayload, copy: ReceiptCopy): Promise<ShareReceiptResult> {
   const pdf = await buildReceiptPdf(receipt, copy);
   return sharePdfDocument(pdf.bytes, pdf.fileName);
@@ -40,21 +57,6 @@ export async function printReceipt(receipt: ReceiptPayload, copy: ReceiptCopy): 
   }
   const pdf = await buildReceiptPdf(receipt, copy);
   await printPdfDocument(pdf.bytes, pdf.fileName);
-}
-
-export async function shareAndPrintReceipt(receipt: ReceiptPayload, copy: ReceiptCopy): Promise<ShareReceiptResult> {
-  const pdf = await buildReceiptPdf(receipt, copy);
-  const shared = await sharePdfDocument(pdf.bytes, pdf.fileName);
-  try {
-    if (Platform.OS === 'web') {
-      await printReceiptHtml(buildReceiptDocument(receipt, copy).html);
-    } else {
-      await printPdfDocument(pdf.bytes, pdf.fileName);
-    }
-  } catch {
-    // The bill is already closed. A closed print dialog should not undo the share.
-  }
-  return shared;
 }
 
 async function writePdfFile(bytes: Uint8Array, fileName: string): Promise<string> {

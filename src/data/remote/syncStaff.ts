@@ -1,4 +1,5 @@
 import type { StaffRecord } from '../../domain/usecases/ManageStaffUseCase';
+import { newId } from '../../security/id';
 import { getSessionCredentials } from '../../security/sessionCredentials';
 import { getDatabase } from '../local/database';
 import { isDeviceOnline } from '../network';
@@ -20,7 +21,7 @@ export async function enqueueStaffSync(record: StaffRecord): Promise<void> {
   await database.runAsync(
     `INSERT INTO sync_queue (id, entity, entity_id, operation, payload, created_at)
      VALUES (?, 'users', ?, 'upsert', ?, ?)`,
-    [crypto.randomUUID(), record.id, JSON.stringify(record), Date.now()],
+    [newId(), record.id, JSON.stringify(record), Date.now()],
   );
 }
 

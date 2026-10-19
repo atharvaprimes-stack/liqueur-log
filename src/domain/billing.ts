@@ -109,6 +109,27 @@ export function lineTotalPaise(quantity: number, unitPrice: number): number {
   return quantity * Math.round(unitPrice * 100);
 }
 
+/** Collapse same-item serves into one receipt row (qty summed). */
+export function aggregateReceiptLines(lines: readonly ReceiptLine[]): ReceiptLine[] {
+  const grouped = new Map<string, ReceiptLine>();
+  for (const line of lines) {
+    const key = `${line.label}\u0000${Math.round(line.unitPrice * 100)}`;
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.quantity += line.quantity;
+      existing.lineTotal = lineTotalPaise(existing.quantity, existing.unitPrice) / 100;
+    } else {
+      grouped.set(key, {
+        label: line.label,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+        lineTotal: line.lineTotal,
+      });
+    }
+  }
+  return [...grouped.values()];
+}
+
 export function formatReceiptAmount(amount: number): string {
   const paise = Math.round(amount * 100);
   const negative = paise < 0;

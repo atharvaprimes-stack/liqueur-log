@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import { Alert, Linking, Platform } from 'react-native';
 import {
   ExpoSpeechRecognitionModule,
   useSpeechRecognitionEvent,
 } from 'expo-speech-recognition';
+import { useTranslation } from 'react-i18next';
 
 type WebSpeechRecognition = {
   lang: string;
@@ -35,6 +36,7 @@ function speechLang(language: string): string {
 }
 
 export function useVoiceSearch(onTranscript: (text: string) => void, language: string) {
+  const { t } = useTranslation();
   const [listening, setListening] = useState(false);
   const [supported, setSupported] = useState(false);
   const webRef = useRef<WebSpeechRecognition | null>(null);
@@ -63,8 +65,24 @@ export function useVoiceSearch(onTranscript: (text: string) => void, language: s
     setListening(false);
   });
 
-  useSpeechRecognitionEvent('error', () => {
+  useSpeechRecognitionEvent('error', (event) => {
     setListening(false);
+    const code = event.error;
+    if (code === 'not-allowed' || code === 'audio-capture') {
+      Alert.alert(t('billing.voicePermissionTitle'), t('billing.voicePermissionBody'), [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('billing.voiceOpenSettings'),
+          onPress: () => {
+            void Linking.openSettings();
+          },
+        },
+      ]);
+      return;
+    }
+    if (code && code !== 'aborted' && code !== 'no-speech') {
+      Alert.alert(t('billing.voiceUnavailableTitle'), t('billing.voiceUnavailableBody'));
+    }
   });
 
   useEffect(() => {
@@ -112,10 +130,23 @@ export function useVoiceSearch(onTranscript: (text: string) => void, language: s
     }
 
     try {
-      const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      let permission = await ExpoSpeechRecognitionModule.getPermissionsAsync();
+      if (!permission.granted && permission.canAskAgain) {
+        permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      }
       if (!permission.granted) {
+        Alert.alert(t('billing.voicePermissionTitle'), t('billing.voicePermissionBody'), [
+          { text: t('common.cancel'), style: 'cancel' },
+          {
+            text: t('billing.voiceOpenSettings'),
+            onPress: () => {
+              void Linking.openSettings();
+            },
+          },
+        ]);
         return;
       }
+
       setListening(true);
       ExpoSpeechRecognitionModule.start({
         lang,
@@ -123,10 +154,12 @@ export function useVoiceSearch(onTranscript: (text: string) => void, language: s
         continuous: false,
         addsPunctuation: false,
       });
-    } catch {
+    } catch (error) {
+      console.error('[voice] start failed', error);
       setListening(false);
+      Alert.alert(t('billing.voiceUnavailableTitle'), t('billing.voiceUnavailableBody'));
     }
-  }, [language]);
+  }, [language, t]);
 
   const toggle = useCallback(() => {
     if (listening) {

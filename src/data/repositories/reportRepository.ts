@@ -9,12 +9,13 @@ import type {
 } from '../../domain/reports';
 import type { StockItem } from '../../domain/models/inventory';
 
-const ITEM_COLUMNS = `id, tenant_id, item_code, name_en, name_mr, brand, liquor_type, sub_type,
+const ITEM_COLUMNS = `id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
   volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold`;
 
 type ItemRow = {
   id: string;
   tenant_id: string;
+  serial_no: number;
   item_code: string;
   name_en: string;
   name_mr: string;
@@ -39,6 +40,7 @@ type MovementSqlRow = {
   quantity: number;
   amount: number;
   unit_price: number;
+  staff_name?: string | null;
 };
 
 type PurchaseSqlRow = MovementSqlRow & {
@@ -78,16 +80,18 @@ export async function loadReportSource(tenantId: string, bounds: ReportBounds): 
               oi.liquor_type AS liquor_type,
               oi.volume_ml AS volume_ml,
               oi.unit_price AS unit_price,
+              COALESCE(u.name, '') AS staff_name,
               SUM(oi.quantity) AS quantity,
               SUM(oi.quantity * oi.unit_price) AS amount
        FROM order_items oi
        JOIN orders o ON o.id = oi.order_id
+       LEFT JOIN users u ON u.id = o.created_by
        WHERE o.tenant_id = ?
          AND o.status = 'PAID'
          AND o.closed_at >= ?
          AND o.closed_at < ?
-       GROUP BY day, oi.item_id, oi.item_code, oi.name_en, oi.name_mr, oi.liquor_type, oi.volume_ml, oi.unit_price
-       ORDER BY day ASC, oi.name_en COLLATE NOCASE ASC`,
+       GROUP BY day, oi.item_id, oi.item_code, oi.name_en, oi.name_mr, oi.liquor_type, oi.volume_ml, oi.unit_price, o.created_by, u.name
+       ORDER BY day ASC, oi.name_en COLLATE NOCASE ASC, u.name COLLATE NOCASE ASC`,
       [tenantId, bounds.from, bounds.until],
     );
     const salesDays = await database.getAllAsync<SalesDaySqlRow>(
@@ -179,6 +183,7 @@ function mapMovement(row: MovementSqlRow): MovementRow {
     quantity: Math.round(Number(row.quantity) || 0),
     amount: Number(row.amount) || 0,
     unitPaise: Math.round((Number(row.unit_price) || 0) * 100),
+    staffName: row.staff_name?.trim() || '',
   };
 }
 
@@ -215,12 +220,15 @@ function mapItem(row: ItemRow): StockItem | null {
   if (!row.liquor_type.trim() || !row.sub_type.trim()) {
     return null;
   }
+  const serialNo = Number(row.serial_no);
   const volumeMl = Number(row.volume_ml);
   const currentStock = Number(row.current_stock);
   const lowStockThreshold = Number(row.low_stock_threshold);
   const purchasePrice = Number(row.purchase_price);
   const sellingPrice = Number(row.selling_price);
   if (
+    !Number.isInteger(serialNo) ||
+    serialNo < 0 ||
     !Number.isInteger(volumeMl) ||
     volumeMl <= 0 ||
     !Number.isInteger(currentStock) ||
@@ -237,6 +245,7 @@ function mapItem(row: ItemRow): StockItem | null {
   return {
     id: row.id,
     tenantId: row.tenant_id,
+    serialNo,
     itemCode: row.item_code,
     nameEn: row.name_en,
     nameMr: row.name_mr,

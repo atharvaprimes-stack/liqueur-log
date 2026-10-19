@@ -3,17 +3,18 @@ import { useTranslation } from 'react-i18next';
 
 import { useAuth } from '../context/auth-context';
 import { getOrder, settleOrder } from '../data/repositories/orderRepository';
-import { buildReceipt, lineTotalPaise, receiptItemLabel, type ReceiptPayload } from '../domain/billing';
+import {
+  aggregateReceiptLines,
+  buildReceipt,
+  lineTotalPaise,
+  receiptItemLabel,
+  type ReceiptPayload,
+} from '../domain/billing';
 import { OrderValidationError, orderErrorCode, type OrderErrorCode } from '../domain/errors';
 import { itemNames } from '../domain/models/inventory';
 import { isPaymentMethod, type PaymentMethod, type SaleOrder } from '../domain/models/orders';
 import type { ReceiptCopy } from '../domain/receiptDocument';
-import { printReceipt, shareAndPrintReceipt, shareReceipt, type ShareReceiptResult } from '../printing/receiptFile';
-
-export type CollectionResult = {
-  share: ShareReceiptResult;
-  order: SaleOrder;
-};
+import { printReceipt, shareReceipt, type ShareReceiptResult } from '../printing/receiptFile';
 
 export function useBilling(): {
   isSubmitting: boolean;
@@ -22,7 +23,7 @@ export function useBilling(): {
   collectAndClose: (
     orderId: string,
     payment: { method: PaymentMethod; paidAmount: number },
-  ) => Promise<CollectionResult>;
+  ) => Promise<SaleOrder>;
   shareBill: (orderId: string) => Promise<ShareReceiptResult | 'error'>;
   printBill: (orderId: string) => Promise<boolean>;
   receiptPreview: (order: SaleOrder) => { receipt: ReceiptPayload; copy: ReceiptCopy } | null;
@@ -48,16 +49,18 @@ export function useBilling(): {
             : t('billing.tableTitle', { number: order.tableId ?? '' }),
         cashierName: currentUser?.name.trim() ?? '',
         closedAt: order.closedAt,
-        lines: order.lines.map((line) => {
-          const names = itemNames(line, i18n.language);
-          const linePaise = lineTotalPaise(line.quantity, line.unitPrice);
-          return {
-            label: receiptItemLabel(names.primary, line.liquorType, line.volumeMl),
-            quantity: line.quantity,
-            unitPrice: line.unitPrice,
-            lineTotal: linePaise / 100,
-          };
-        }),
+        lines: aggregateReceiptLines(
+          order.lines.map((line) => {
+            const names = itemNames(line, i18n.language);
+            const linePaise = lineTotalPaise(line.quantity, line.unitPrice);
+            return {
+              label: receiptItemLabel(names.primary, line.liquorType, line.volumeMl),
+              quantity: line.quantity,
+              unitPrice: line.unitPrice,
+              lineTotal: linePaise / 100,
+            };
+          }),
+        ),
         totalAmount: order.totalAmount,
         paidAmount: order.paidAmount,
         paymentLabel: t(`billing.methods.${order.paymentMethod}`),
@@ -102,16 +105,13 @@ export function useBilling(): {
       setIsSubmitting(true);
       setErrorCode(null);
       try {
-        const order = await settleOrder({
+        return await settleOrder({
           tenantId,
           actorId,
           orderId,
           method: payment.method,
           paidAmount: payment.paidAmount,
         });
-        const receipt = receiptFor(order);
-        const share = await shareAndPrintReceipt(receipt, copyFor(receipt));
-        return { share, order };
       } catch (error) {
         const code = orderErrorCode(error);
         setErrorCode(code);
@@ -120,7 +120,7 @@ export function useBilling(): {
         setIsSubmitting(false);
       }
     },
-    [actorId, copyFor, receiptFor, tenantId],
+    [actorId, tenantId],
   );
 
   const shareBill = useCallback(

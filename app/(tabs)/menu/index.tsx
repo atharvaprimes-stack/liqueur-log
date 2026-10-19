@@ -23,7 +23,7 @@ const THEME_HINTS: Record<ThemeId, 'menu.lightHint' | 'menu.darkHint' | 'menu.am
 export default function MenuScreen() {
   const { t, i18n } = useTranslation();
   const { currentUser, logout } = useAuth();
-  const { theme, setTheme, toggleLanguage } = useTheme();
+  const { theme, setTheme, toggleLanguage, palette } = useTheme();
   const isAdmin = currentUser?.role === 'ADMIN';
   const language = i18n.language.startsWith('mr') ? 'mr' : 'en';
 
@@ -156,11 +156,13 @@ export default function MenuScreen() {
 
         <Pressable
           accessibilityRole="button"
+          accessibilityLabel={t('common.signOut')}
           onPress={() => {
             void logout().then(() => router.replace('/login'));
           }}
-          className="h-12 items-center justify-center rounded-lg border border-line bg-surface"
+          className="h-12 flex-row items-center justify-center gap-2 rounded-lg border border-line bg-surface"
         >
+          <Ionicons name="log-out-outline" size={18} color={palette.ink} />
           <Text className="text-base font-semibold text-ink">{t('common.signOut')}</Text>
         </Pressable>
       </ScrollView>

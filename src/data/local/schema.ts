@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS preferences (
 CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY NOT NULL,
   tenant_id TEXT NOT NULL,
+  serial_no INTEGER NOT NULL DEFAULT 0 CHECK (serial_no >= 0),
   item_code TEXT NOT NULL,
   name_en TEXT NOT NULL,
   name_mr TEXT NOT NULL,
@@ -298,11 +299,11 @@ CREATE TABLE IF NOT EXISTS order_items (
   FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE RESTRICT
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS order_items_order_item_idx
-  ON order_items (order_id, item_id);
-
 CREATE INDEX IF NOT EXISTS order_items_order_id_idx
   ON order_items (order_id);
+
+CREATE INDEX IF NOT EXISTS order_items_order_item_idx
+  ON order_items (order_id, item_id);
 
 CREATE TRIGGER IF NOT EXISTS order_items_lock_insert
 BEFORE INSERT ON order_items

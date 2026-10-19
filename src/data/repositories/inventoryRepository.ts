@@ -13,6 +13,7 @@ import {
   type Vendor,
   type VendorInput,
 } from '../../domain/models/inventory';
+import { newId } from '../../security/id';
 import { isUniqueConstraintError, withDatabase, withLockedTransaction } from '../local/database';
 import { requestSync, syncNow } from '../sync/engine';
 import { enqueueDelete, enqueueUpsert, recordAdjustment } from '../sync/outbox';
@@ -20,6 +21,7 @@ import { enqueueDelete, enqueueUpsert, recordAdjustment } from '../sync/outbox';
 type ItemRow = {
   id: string;
   tenant_id: string;
+  serial_no: number;
   item_code: string;
   name_en: string;
   name_mr: string;
@@ -33,7 +35,7 @@ type ItemRow = {
   low_stock_threshold: number;
 };
 
-const ITEM_COLUMNS = `id, tenant_id, item_code, name_en, name_mr, brand, liquor_type, sub_type,
+const ITEM_COLUMNS = `id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
   volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold`;
 
 export async function listStock(tenantId: string): Promise<StockItem[]> {
@@ -235,7 +237,7 @@ export async function recordPurchase(
         }
       }
 
-      const purchaseId = crypto.randomUUID();
+      const purchaseId = newId();
       const purchasedAt = Date.now();
       await database.runAsync(
         `INSERT INTO purchases (
@@ -261,7 +263,7 @@ export async function recordPurchase(
           `INSERT INTO purchase_items (
              id, purchase_id, item_id, quantity_received, unit_purchase_price
            ) VALUES (?, ?, ?, ?, ?)`,
-          [crypto.randomUUID(), purchaseId, line.itemId, line.quantityReceived, unitRupees],
+          [newId(), purchaseId, line.itemId, line.quantityReceived, unitRupees],
         );
 
         const updated = await database.runAsync(
@@ -403,7 +405,7 @@ export async function saveCatalogTerm(input: {
         `SELECT sort_order FROM ${table} WHERE tenant_id = ? ORDER BY sort_order DESC LIMIT 1`,
         [input.tenantId],
       );
-      const termId = crypto.randomUUID();
+      const termId = newId();
       await database.runAsync(
         `INSERT INTO ${table} (id, tenant_id, name, sort_order, updated_at) VALUES (?, ?, ?, ?, ?)`,
         [termId, input.tenantId, name, (last?.sort_order ?? -1) + 1, Date.now()],
@@ -473,16 +475,22 @@ export async function createCatalogItem(input: {
       await assertAdmin(database, input.tenantId, input.actorId);
       const liquorType = await canonicalTerm(database, input.tenantId, 'type', draft.liquorType);
       const subType = await canonicalTerm(database, input.tenantId, 'strength', draft.subType);
-      const itemId = crypto.randomUUID();
+      const itemId = newId();
       const now = Date.now();
+      const maxSerial = await database.getFirstAsync<{ serial_no: number }>(
+        'SELECT COALESCE(MAX(serial_no), 0) AS serial_no FROM items WHERE tenant_id = ?',
+        [input.tenantId],
+      );
+      const serialNo = (maxSerial?.serial_no ?? 0) + 1;
       await database.runAsync(
         `INSERT INTO items (
-           id, tenant_id, item_code, name_en, name_mr, brand, liquor_type, sub_type,
+           id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
            volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
         [
           itemId,
           input.tenantId,
+          serialNo,
           draft.itemCode,
           draft.nameEn,
           draft.nameMr,
@@ -614,7 +622,7 @@ export async function createVendor(input: {
   try {
     await withLockedTransaction(async (database) => {
       await assertAdmin(database, input.tenantId, input.actorId);
-      const vendorId = crypto.randomUUID();
+      const vendorId = newId();
       await database.runAsync(
         'INSERT INTO vendors (id, tenant_id, name, phone, updated_at) VALUES (?, ?, ?, ?, ?)',
         [vendorId, input.tenantId, draft.name, draft.phone, Date.now()],
@@ -793,7 +801,7 @@ async function insertActivity(
     detail: Record<string, string | number>;
   },
 ): Promise<string> {
-  const id = crypto.randomUUID();
+  const id = newId();
   await database.runAsync(
     `INSERT INTO activity_logs (
        id, tenant_id, actor_id, action, entity, entity_id, detail, created_at
@@ -818,12 +826,15 @@ function mapItem(row: ItemRow): StockItem | null {
     return null;
   }
 
+  const serialNo = Number(row.serial_no);
   const volumeMl = Number(row.volume_ml);
   const currentStock = Number(row.current_stock);
   const lowStockThreshold = Number(row.low_stock_threshold);
   const purchasePrice = Number(row.purchase_price);
   const sellingPrice = Number(row.selling_price);
   if (
+    !Number.isInteger(serialNo) ||
+    serialNo < 0 ||
     !Number.isInteger(volumeMl) ||
     volumeMl <= 0 ||
     !Number.isInteger(currentStock) ||
@@ -841,6 +852,7 @@ function mapItem(row: ItemRow): StockItem | null {
   return {
     id: row.id,
     tenantId: row.tenant_id,
+    serialNo,
     itemCode: row.item_code,
     nameEn: row.name_en,
     nameMr: row.name_mr,

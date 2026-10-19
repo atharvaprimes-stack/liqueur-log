@@ -1,5 +1,7 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
+import { newId } from '../../security/id';
+
 export async function queueChange(
   database: SQLiteDatabase,
   entity: string,
@@ -10,7 +12,7 @@ export async function queueChange(
   await database.runAsync(
     `INSERT INTO sync_queue (id, entity, entity_id, operation, payload, created_at)
      VALUES (?, ?, ?, ?, '{}', ?)`,
-    [crypto.randomUUID(), entity, entityId, operation, Date.now()],
+    [newId(), entity, entityId, operation, Date.now()],
   );
 }
 
