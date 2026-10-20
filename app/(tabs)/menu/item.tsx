@@ -155,6 +155,33 @@ export default function ItemFormScreen() {
             <Text className="mt-4 text-sm text-danger">{t('catalog.errors.unknown-item')}</Text>
           ) : null}
 
+          <Text className="mb-2 mt-5 text-sm font-semibold text-ink">{t('catalog.station')}</Text>
+          <View className="flex-row gap-4">
+            {(['bar', 'kitchen'] as const).map((station: ServiceStation) => {
+              const selected = form.serviceStation === station;
+              return (
+                <Pressable
+                  key={station}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
+                  onPress={() => patch({ serviceStation: station })}
+                  className="min-w-0 flex-1 flex-row items-center gap-2 py-1"
+                >
+                  <View
+                    className={`h-5 w-5 items-center justify-center rounded-full border-2 ${
+                      selected ? 'border-accent' : 'border-line'
+                    }`}
+                  >
+                    {selected ? <View className="h-2.5 w-2.5 rounded-full bg-accent" /> : null}
+                  </View>
+                  <Text className="text-base text-ink">
+                    {t(station === 'bar' ? 'catalog.stationBar' : 'catalog.stationKitchen')}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
           <Field label={t('catalog.code')}>
             <TextInput
               value={form.itemCode}
@@ -215,18 +242,6 @@ export default function ItemFormScreen() {
             </ScrollView>
           )}
 
-          <Text className="mb-2 mt-5 text-sm font-semibold text-ink">{t('catalog.station')}</Text>
-          <View className="flex-row gap-2">
-            {(['bar', 'kitchen'] as const).map((station: ServiceStation) => (
-              <ChoiceChip
-                key={station}
-                label={t(station === 'bar' ? 'billing.barItems' : 'billing.kitchenItems')}
-                selected={form.serviceStation === station}
-                onPress={() => patch({ serviceStation: station })}
-              />
-            ))}
-          </View>
-
           <Text className="mb-2 mt-5 text-sm font-semibold text-ink">{t('catalog.subType')}</Text>
           {itemStrengths.length === 0 && !isLoading ? (
             <Text className="text-sm text-muted">{t('catalog.noStrengths')}</Text>
@@ -243,46 +258,54 @@ export default function ItemFormScreen() {
             </ScrollView>
           )}
 
-          <Field label={t(kitchen ? 'catalog.volumeSnack' : 'catalog.volume')}>
-            <TextInput
-              value={form.volumeMl}
-              onChangeText={(value) => patch({ volumeMl: value.replace(/\D/g, '').slice(0, 5) })}
-              keyboardType="number-pad"
-              placeholder={t('catalog.volumePlaceholder')}
-              placeholderTextColor={palette.muted}
-              className={inputClass}
-            />
-          </Field>
-          <Field label={t('catalog.cost')}>
-            <TextInput
-              value={form.purchasePrice}
-              onChangeText={(value) => patch({ purchasePrice: sanitizeRupeeInput(value) })}
-              keyboardType="decimal-pad"
-              placeholder={t('catalog.pricePlaceholder')}
-              placeholderTextColor={palette.muted}
-              className={inputClass}
-            />
-          </Field>
-          <Field label={t('catalog.selling')}>
-            <TextInput
-              value={form.sellingPrice}
-              onChangeText={(value) => patch({ sellingPrice: sanitizeRupeeInput(value) })}
-              keyboardType="decimal-pad"
-              placeholder={t('catalog.pricePlaceholder')}
-              placeholderTextColor={palette.muted}
-              className={inputClass}
-            />
-          </Field>
-          <Field label={t('catalog.threshold')}>
-            <TextInput
-              value={form.lowStockThreshold}
-              onChangeText={(value) => patch({ lowStockThreshold: value.replace(/\D/g, '').slice(0, 4) })}
-              keyboardType="number-pad"
-              placeholder="0"
-              placeholderTextColor={palette.muted}
-              className={inputClass}
-            />
-          </Field>
+          <View className="mt-4 flex-row gap-3">
+            <Field
+              label={t(kitchen ? 'catalog.volumeSnack' : 'catalog.volume')}
+              className="min-w-0 flex-1"
+              alignLabel
+            >
+              <TextInput
+                value={form.volumeMl}
+                onChangeText={(value) => patch({ volumeMl: value.replace(/\D/g, '').slice(0, 5) })}
+                keyboardType="number-pad"
+                placeholder={t('catalog.volumePlaceholder')}
+                placeholderTextColor={palette.muted}
+                className={inputClass}
+              />
+            </Field>
+            <Field label={t('catalog.threshold')} className="min-w-0 flex-1" alignLabel>
+              <TextInput
+                value={form.lowStockThreshold}
+                onChangeText={(value) => patch({ lowStockThreshold: value.replace(/\D/g, '').slice(0, 4) })}
+                keyboardType="number-pad"
+                placeholder="0"
+                placeholderTextColor={palette.muted}
+                className={inputClass}
+              />
+            </Field>
+          </View>
+          <View className="mt-4 flex-row gap-3">
+            <Field label={t('catalog.cost')} className="min-w-0 flex-1" alignLabel>
+              <TextInput
+                value={form.purchasePrice}
+                onChangeText={(value) => patch({ purchasePrice: sanitizeRupeeInput(value) })}
+                keyboardType="decimal-pad"
+                placeholder={t('catalog.pricePlaceholder')}
+                placeholderTextColor={palette.muted}
+                className={inputClass}
+              />
+            </Field>
+            <Field label={t('catalog.selling')} className="min-w-0 flex-1" alignLabel>
+              <TextInput
+                value={form.sellingPrice}
+                onChangeText={(value) => patch({ sellingPrice: sanitizeRupeeInput(value) })}
+                keyboardType="decimal-pad"
+                placeholder={t('catalog.pricePlaceholder')}
+                placeholderTextColor={palette.muted}
+                className={inputClass}
+              />
+            </Field>
+          </View>
 
           {formError ? <Text className="mt-4 text-sm text-danger">{t(`catalog.errors.${formError}`)}</Text> : null}
 
@@ -352,10 +375,24 @@ function choiceNames(names: string[], current: string): string[] {
   return [current, ...names];
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({
+  label,
+  children,
+  className = 'mt-4',
+  alignLabel = false,
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+  alignLabel?: boolean;
+}) {
   return (
-    <View className="mt-4">
-      <Text className="mb-2 text-sm font-semibold text-ink">{label}</Text>
+    <View className={className}>
+      <View className={`mb-2 ${alignLabel ? 'min-h-10 justify-end' : ''}`}>
+        <Text className="text-sm font-semibold leading-5 text-ink" numberOfLines={alignLabel ? 2 : undefined}>
+          {label}
+        </Text>
+      </View>
       {children}
     </View>
   );
