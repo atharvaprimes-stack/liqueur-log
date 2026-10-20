@@ -57,13 +57,25 @@ module.exports = {
         speechRecognitionPermission: 'Allow Liqueur Log to turn speech into search text.',
       },
     ],
+    [
+      'expo-notifications',
+      {
+        icon: './assets/icon.png',
+        color: '#F59E0B',
+        defaultChannel: 'table-requests',
+      },
+    ],
   ],
   experiments: {
     typedRoutes: false,
   },
   android: {
     package: 'com.liqueurlog.app',
-    permissions: ['android.permission.RECORD_AUDIO'],
+    permissions: [
+      'android.permission.RECORD_AUDIO',
+      'android.permission.POST_NOTIFICATIONS',
+      'android.permission.VIBRATE',
+    ],
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',
       backgroundColor: '#000000',

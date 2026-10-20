@@ -15,6 +15,13 @@ wrapped.resolver.resolveRequest = (context, moduleName, platform) => {
       filePath: path.join(__dirname, 'node_modules/pdf-lib/dist/pdf-lib.esm.js'),
     };
   }
+  // expo-notifications is native-only; its web resolution is broken in this SDK.
+  if (platform === 'web' && moduleName === 'expo-notifications') {
+    return {
+      type: 'sourceFile',
+      filePath: path.join(__dirname, 'src/notifications/expoNotifications.web.ts'),
+    };
+  }
   if (typeof previousResolveRequest === 'function') {
     return previousResolveRequest(context, moduleName, platform);
   }

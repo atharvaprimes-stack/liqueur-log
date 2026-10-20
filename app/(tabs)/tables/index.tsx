@@ -8,7 +8,9 @@ import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
 import { orderErrorCode, type OrderErrorCode } from '../../../src/domain/errors';
 import { formatInr } from '../../../src/domain/money';
 import type { FloorTable } from '../../../src/domain/models/orders';
+import type { TableRequestSummary } from '../../../src/domain/models/tableRequests';
 import { useFloor } from '../../../src/hooks/useFloor';
+import { useTableRequests } from '../../../src/hooks/useTableRequests';
 import { resolveBottomInset } from '../../../src/navigation/bottomInset';
 import { useTheme } from '../../../src/theme/theme-context';
 import type { ThemeId } from '../../../src/theme/themes';
@@ -19,6 +21,7 @@ export default function TablesScreen() {
   const insets = useSafeAreaInsets();
   const bottomInset = resolveBottomInset(insets.bottom);
   const { tables, counter, isLoading, errorCode, startTable } = useFloor();
+  const { summaryForTable } = useTableRequests();
   const [pending, setPending] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<OrderErrorCode | null>(null);
@@ -67,6 +70,7 @@ export default function TablesScreen() {
               <View key={table.number} className="w-1/2 p-1.5">
                 <TableCard
                   table={table}
+                  pendingRequests={table.order ? summaryForTable(table.number) : null}
                   onPress={() => {
                     if (table.order) {
                       router.push(`/table/${table.number}`);
@@ -205,39 +209,93 @@ const OCCUPIED_TINTED: Omit<FloorCardTone, 'base'> = {
   border: 'rgba(239, 68, 68, 0.4)',
 };
 
-const FLOOR_CARD_TONES: Record<ThemeId, { occupied: FloorCardTone; available: FloorCardTone }> = {
-  light: { occupied: OCCUPIED_LIGHT, available: AVAILABLE_LIGHT },
+const REQUEST_PENDING_LIGHT: FloorCardTone = {
+  base: '#FEF9C3',
+  tint: 'rgba(234, 179, 8, 0.15)',
+  ink: '#A16207',
+  muted: '#A16207',
+  badgeBackground: 'rgba(234, 179, 8, 0.22)',
+  border: 'rgba(234, 179, 8, 0.55)',
+};
+
+const REQUEST_PENDING_TINTED: Omit<FloorCardTone, 'base'> = {
+  tint: 'rgba(234, 179, 8, 0.15)',
+  ink: '#FACC15',
+  muted: '#FACC15',
+  badgeBackground: 'rgba(234, 179, 8, 0.22)',
+  border: 'rgba(234, 179, 8, 0.55)',
+};
+
+const FLOOR_CARD_TONES: Record<
+  ThemeId,
+  { occupied: FloorCardTone; available: FloorCardTone; pending: FloorCardTone }
+> = {
+  light: { occupied: OCCUPIED_LIGHT, available: AVAILABLE_LIGHT, pending: REQUEST_PENDING_LIGHT },
   dark: {
     occupied: { ...OCCUPIED_TINTED, base: '#1E293B' },
     available: { ...AVAILABLE_TINTED, base: '#1E293B' },
+    pending: { ...REQUEST_PENDING_TINTED, base: '#1E293B' },
   },
   amber: {
     occupied: { ...OCCUPIED_TINTED, base: '#211710' },
     available: { ...AVAILABLE_TINTED, base: '#211710' },
+    pending: { ...REQUEST_PENDING_TINTED, base: '#211710' },
   },
 };
 
-function TableCard({ table, onPress }: { table: FloorTable; onPress: () => void }) {
+function TableCard({
+  table,
+  pendingRequests,
+  onPress,
+}: {
+  table: FloorTable;
+  pendingRequests: TableRequestSummary | null;
+  onPress: () => void;
+}) {
   const { t } = useTranslation();
   const { theme } = useTheme();
   const order = table.order;
   const occupied = order !== null;
-  const tone = occupied ? FLOOR_CARD_TONES[theme].occupied : FLOOR_CARD_TONES[theme].available;
+  const hasPending = (pendingRequests?.count ?? 0) > 0;
+  const tone = hasPending
+    ? FLOOR_CARD_TONES[theme].pending
+    : occupied
+      ? FLOOR_CARD_TONES[theme].occupied
+      : FLOOR_CARD_TONES[theme].available;
   const status = occupied
     ? `${t('tables.occupied')} ${formatInr(order.totalAmount)}`
     : t('tables.available');
+  const requestLabel = hasPending
+    ? t('tables.requestBadge', {
+        count: pendingRequests!.count,
+        amount: formatInr(pendingRequests!.totalAmount),
+      })
+    : null;
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={t('tables.tableA11y', { number: table.number, status })}
+      accessibilityLabel={
+        requestLabel
+          ? `${t('tables.tableA11y', { number: table.number, status })}. ${t('tables.requestBadgeA11y', {
+              count: pendingRequests!.count,
+              amount: formatInr(pendingRequests!.totalAmount),
+            })}`
+          : t('tables.tableA11y', { number: table.number, status })
+      }
       onPress={onPress}
       className="h-32 w-full overflow-hidden rounded-xl border"
       style={{ backgroundColor: tone.base, borderColor: tone.border }}
     >
       <View className="h-full w-full justify-between p-3" style={{ backgroundColor: tone.tint }}>
         <View className="min-h-5 justify-center">
-          {occupied ? (
+          {hasPending ? (
+            <View className="self-start rounded-md px-1.5 py-0.5" style={{ backgroundColor: tone.badgeBackground }}>
+              <Text className="text-[10px] font-bold" numberOfLines={1} style={{ color: tone.ink }}>
+                {requestLabel}
+              </Text>
+            </View>
+          ) : occupied ? (
             <View className="flex-row items-center justify-between gap-2">
               <Text className="min-w-0 flex-1 text-xs font-bold" numberOfLines={1} style={{ color: tone.ink }}>
                 {t('tables.occupied')}

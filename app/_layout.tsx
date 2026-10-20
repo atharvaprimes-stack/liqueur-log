@@ -4,6 +4,7 @@ import { Stack } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider, SessionTimeoutProvider } from '../src/context/AuthContext';
+import { TableRequestsProvider } from '../src/context/TableRequestsContext';
 import { ThemeProvider } from '../src/context/ThemeContext';
 import '../src/i18n';
 
@@ -17,9 +18,11 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ThemeProvider>
         <AuthProvider>
-          <SessionTimeoutProvider>
-            <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: 'transparent' } }} />
-          </SessionTimeoutProvider>
+          <TableRequestsProvider>
+            <SessionTimeoutProvider>
+              <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: 'transparent' } }} />
+            </SessionTimeoutProvider>
+          </TableRequestsProvider>
         </AuthProvider>
       </ThemeProvider>
     </SafeAreaProvider>
