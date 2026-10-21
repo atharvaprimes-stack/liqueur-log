@@ -529,6 +529,9 @@ export function parseCatalogItem(input: CatalogItemInput): CatalogItemDraft {
   if (purchasePaise === null || sellingPaise === null) {
     throw new InventoryValidationError('price');
   }
+  if (sellingPaise < purchasePaise) {
+    throw new InventoryValidationError('sell-below-cost');
+  }
 
   const thresholdText = input.lowStockThreshold.trim();
   const lowStockThreshold = Number(thresholdText);
