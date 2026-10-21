@@ -33,6 +33,7 @@ import { useVoiceSearch } from '../hooks/useVoiceSearch';
 import { useAuth } from '../context/AuthContext';
 import { useBottomInset } from '../navigation/bottomInset';
 import { leaveScreen } from '../navigation/leave';
+import { afterModalDismissed } from '../printing/receiptFile';
 import { useTheme } from '../theme/theme-context';
 import { ActionRow } from './FormActions';
 import { PaymentSheet } from './PaymentSheet';
@@ -53,7 +54,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
   const [query, setQuery] = useState('');
   const [section, setSection] = useState<OrderCatalogSection>('bar');
   const [paymentOpen, setPaymentOpen] = useState(false);
-  const [shareNotice, setShareNotice] = useState<'failed' | 'downloaded' | null>(null);
+  const [shareNotice, setShareNotice] = useState<'failed' | 'downloaded' | 'printFailed' | null>(null);
   const [formError, setFormError] = useState<OrderErrorCode | null>(null);
   const [requestNotice, setRequestNotice] = useState(false);
   const [focusLineId, setFocusLineId] = useState<string | null>(null);
@@ -576,7 +577,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                       void billing.shareBill(order.id).then((result) => {
                         if (result === 'downloaded') {
                           setShareNotice('downloaded');
-                        } else if (result === 'unopened') {
+                        } else if (result === 'unopened' || result === 'error') {
                           setShareNotice('failed');
                         }
                       });
@@ -594,7 +595,6 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
             order={order}
             submitting={billing.isSubmitting}
             errorCode={billing.errorCode}
-            confirmLabel={target.kind === 'counter' ? t('billing.closeCounter') : t('billing.closeTable')}
             shareNotice={shareNotice}
             draftPreview={draftPreview}
             onClose={() => {
@@ -607,17 +607,32 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
               void onCollect(payment);
             }}
             onPrint={(preview) => {
-              void billing.printPreview(preview);
+              void (async () => {
+                setShareNotice(null);
+                // Native PrintManager sits under RN Modal; Android resolves as soon as
+                // the dialog opens, so keep the sheet closed afterward.
+                setPaymentOpen(false);
+                await afterModalDismissed();
+                const ok = await billing.printPreview(preview);
+                if (!ok) {
+                  setPaymentOpen(true);
+                  setShareNotice('printFailed');
+                }
+              })();
             }}
             onShare={(preview) => {
-              setShareNotice(null);
-              void billing.sharePreview(preview).then((result) => {
+              void (async () => {
+                setShareNotice(null);
+                setPaymentOpen(false);
+                await afterModalDismissed();
+                const result = await billing.sharePreview(preview);
+                setPaymentOpen(true);
                 if (result === 'downloaded') {
                   setShareNotice('downloaded');
-                } else if (result === 'unopened') {
+                } else if (result === 'unopened' || result === 'error') {
                   setShareNotice('failed');
                 }
-              });
+              })();
             }}
           />
         </View>

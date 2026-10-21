@@ -22,11 +22,13 @@ export async function pushSyncBatch(
     p_batch: { changes },
   });
   if (error) {
+    console.warn('[sync] push_sync_batch failed', error.message);
     return null;
   }
 
   const payload = asRecord(data) as PushResponse | null;
   if (!payload?.ok || !Array.isArray(payload.acked)) {
+    console.warn('[sync] push_sync_batch rejected batch', payload);
     return null;
   }
   return payload.acked.filter((id): id is string => typeof id === 'string');

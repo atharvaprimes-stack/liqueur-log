@@ -1,5 +1,14 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Pressable, RefreshControl, SectionList, Text, TextInput, View } from 'react-native';
+import {
+  Alert,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  SectionList,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -7,12 +16,15 @@ import { useTranslation } from 'react-i18next';
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
 import {
   compactVolume,
+  filterByStockStatus,
   filterStockEntrySearch,
   groupStock,
   isLowStock,
   itemNames,
   knownTermLabel,
+  STOCK_STATUS_FILTERS,
   type StockItem,
+  type StockStatusFilter,
 } from '../../../src/domain/models/inventory';
 import { useVoiceSearch } from '../../../src/hooks/useVoiceSearch';
 import { useInventory } from '../../../src/hooks/useInventory';
@@ -24,6 +36,7 @@ export default function StockScreen() {
   const language = i18n.language;
   const { items, itemTypes, isLoading, errorCode, isAdmin, reload } = useInventory();
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StockStatusFilter>('all');
   const [refreshing, setRefreshing] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -32,8 +45,16 @@ export default function StockScreen() {
     setSearch(transcript);
   }, language);
 
-  const searched = useMemo(() => filterStockEntrySearch(items, search), [items, search]);
+  const statusFiltered = useMemo(
+    () => filterByStockStatus(items, statusFilter),
+    [items, statusFilter],
+  );
+  const searched = useMemo(
+    () => filterStockEntrySearch(statusFiltered, search),
+    [search, statusFiltered],
+  );
   const sections = useMemo(() => groupStock(searched, itemTypes), [itemTypes, searched]);
+  const filterCount = statusFiltered.length;
   const selectedCount = selectedIds.size;
 
   const onRefresh = useCallback(async () => {
@@ -77,19 +98,23 @@ export default function StockScreen() {
     router.push({ pathname: '/stock/purchase', params: { itemIds } });
   };
 
-  const emptyKind: 'search' | 'catalog' = search.trim() ? 'search' : 'catalog';
+  const emptyKind: 'search' | 'filter' | 'catalog' = search.trim()
+    ? 'search'
+    : statusFilter !== 'all'
+      ? 'filter'
+      : 'catalog';
 
   return (
     <ScreenWrapper padded={false}>
       <View className="flex-1">
         {items.length > 0 || isLoading ? (
-          <View className="px-4 pb-3 pt-3">
-            <View className="h-11 flex-row items-center rounded-xl border border-line bg-surface px-3">
+          <View className="pb-3 pt-3">
+            <View className="mx-4 h-11 flex-row items-center rounded-xl border border-line bg-surface px-3">
               <Ionicons name="search" size={18} color={palette.muted} />
               <TextInput
                 value={search}
                 onChangeText={setSearch}
-                placeholder={t('stock.search')}
+                placeholder={t('stock.searchWithCount', { count: filterCount })}
                 placeholderTextColor={palette.muted}
                 autoCorrect={false}
                 autoCapitalize="none"
@@ -127,6 +152,22 @@ export default function StockScreen() {
                 />
               </Pressable>
             </View>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              className="mt-3 max-h-12"
+              contentContainerClassName="items-center gap-2 px-4"
+            >
+              {STOCK_STATUS_FILTERS.map((entry) => (
+                <StatusFilterChip
+                  key={entry}
+                  label={t(`stock.filters.${entry}`)}
+                  selected={statusFilter === entry}
+                  onPress={() => setStatusFilter(entry)}
+                />
+              ))}
+            </ScrollView>
           </View>
         ) : null}
 
@@ -143,7 +184,7 @@ export default function StockScreen() {
             className="flex-1"
             contentContainerStyle={{ flexGrow: sections.length === 0 ? 1 : undefined, paddingBottom: 12 }}
             stickySectionHeadersEnabled
-            extraData={{ language, selecting, selectedCount }}
+            extraData={{ language, selecting, selectedCount, statusFilter }}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             refreshControl={
@@ -175,11 +216,26 @@ export default function StockScreen() {
             ListEmptyComponent={
               <View className="flex-1 items-center justify-center px-6">
                 <Text className="text-center text-base text-muted">
-                  {t(emptyKind === 'search' ? 'stock.emptySearch' : 'stock.emptyCatalog')}
+                  {t(
+                    emptyKind === 'search'
+                      ? 'stock.emptySearch'
+                      : emptyKind === 'filter'
+                        ? 'stock.emptyFilter'
+                        : 'stock.emptyCatalog',
+                  )}
                 </Text>
                 {emptyKind === 'search' ? (
                   <Pressable accessibilityRole="button" onPress={() => setSearch('')} className="mt-3 h-11 justify-center">
                     <Text className="text-base font-semibold text-accent">{t('stock.clearSearch')}</Text>
+                  </Pressable>
+                ) : null}
+                {emptyKind === 'filter' ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setStatusFilter('all')}
+                    className="mt-3 h-11 justify-center"
+                  >
+                    <Text className="text-base font-semibold text-accent">{t('stock.showAll')}</Text>
                   </Pressable>
                 ) : null}
               </View>
@@ -226,6 +282,27 @@ export default function StockScreen() {
         ) : null}
       </View>
     </ScreenWrapper>
+  );
+}
+
+function StatusFilterChip({
+  label,
+  selected,
+  onPress,
+}: {
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      onPress={onPress}
+      className={`h-10 justify-center rounded-lg border px-3 ${selected ? 'border-accent bg-accent' : 'border-line bg-surface'}`}
+    >
+      <Text className={`text-sm font-semibold ${selected ? 'text-accent-ink' : 'text-ink'}`}>{label}</Text>
+    </Pressable>
   );
 }
 

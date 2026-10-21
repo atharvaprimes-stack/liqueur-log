@@ -1,5 +1,4 @@
 import { Platform } from 'react-native';
-import * as IntentLauncher from 'expo-intent-launcher';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { File as ExpoFile, Paths } from 'expo-file-system';
@@ -9,10 +8,17 @@ import { buildReceiptDocument, type ReceiptCopy } from '../domain/receiptDocumen
 import { buildReceiptPdf } from './receiptPdf';
 import { receiptQrDataUri } from './receiptQr';
 
-const WHATSAPP_PACKAGES = ['com.whatsapp', 'com.whatsapp.w4b'];
-const FLAG_GRANT_READ_URI_PERMISSION = 1;
-
 export type ShareReceiptResult = 'shared' | 'downloaded' | 'unopened';
+
+/** Android PrintManager / share sheets sit under RN Modal windows — wait for dismiss. */
+export function afterModalDismissed(): Promise<void> {
+  if (Platform.OS === 'web') {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    setTimeout(resolve, Platform.OS === 'android' ? 400 : 320);
+  });
+}
 
 export async function sharePdfDocument(bytes: Uint8Array, fileName: string): Promise<ShareReceiptResult> {
   if (Platform.OS === 'web') {
@@ -72,17 +78,12 @@ async function writePdfFile(bytes: Uint8Array, fileName: string): Promise<string
 }
 
 async function shareReceiptPdf(uri: string): Promise<ShareReceiptResult> {
-  if (Platform.OS === 'android') {
-    const opened = await openWhatsApp(uri);
-    if (opened) {
-      return 'shared';
-    }
-  }
-
   const available = await Sharing.isAvailableAsync();
   if (!available) {
     return 'unopened';
   }
+  // System share sheet (FileProvider + FLAG_GRANT_READ_URI_PERMISSION). Direct
+  // IntentLauncher SEND extras cannot carry a Uri STREAM, so they never open WhatsApp correctly.
   await Sharing.shareAsync(uri, {
     mimeType: 'application/pdf',
     UTI: 'com.adobe.pdf',
@@ -91,31 +92,15 @@ async function shareReceiptPdf(uri: string): Promise<ShareReceiptResult> {
   return 'shared';
 }
 
-async function openWhatsApp(uri: string): Promise<boolean> {
-  const contentUri = new ExpoFile(uri).contentUri;
-  for (const packageName of WHATSAPP_PACKAGES) {
-    try {
-      await IntentLauncher.startActivityAsync('android.intent.action.SEND', {
-        type: 'application/pdf',
-        packageName,
-        flags: FLAG_GRANT_READ_URI_PERMISSION,
-        extra: {
-          'android.intent.extra.STREAM': contentUri,
-        },
-      });
-      return true;
-    } catch {
-      // This WhatsApp package is not installed. Try the next one.
-    }
-  }
-  return false;
-}
-
 async function printReceiptPdf(uri: string): Promise<void> {
   try {
     await Print.printAsync({ uri });
-  } catch {
-    // The print window was closed before a printer was chosen.
+  } catch (error) {
+    // iOS rejects when the print UI is dismissed without starting a print.
+    if (Platform.OS === 'ios') {
+      return;
+    }
+    throw error;
   }
 }
 

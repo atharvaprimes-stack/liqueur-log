@@ -76,7 +76,7 @@ export function StockEntryScreen() {
   const [vendorId, setVendorId] = useState<string | null>(null);
   const [vendorPickerOpen, setVendorPickerOpen] = useState(false);
   const [invoiceNumber, setInvoiceNumber] = useState('');
-  const [paymentType, setPaymentType] = useState<PaymentType | null>(null);
+  const [paymentType, setPaymentType] = useState<PaymentType | null>('Cash');
   const [amountPaid, setAmountPaid] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -240,7 +240,7 @@ export function StockEntryScreen() {
                 ) : vendors.length === 0 ? (
                   <Pressable
                     accessibilityRole="button"
-                    onPress={() => router.push({ pathname: '/menu/vendors', params: { returnTo: '/stock/purchase' } })}
+                    onPress={() => router.push('/menu/vendors')}
                     className="h-11 items-center justify-center rounded-lg border border-dashed border-line bg-canvas px-2"
                   >
                     <Text className="text-sm font-semibold text-accent">{t('stock.purchase.addVendor')}</Text>

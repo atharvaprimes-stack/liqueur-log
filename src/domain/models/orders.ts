@@ -46,6 +46,8 @@ export type SaleOrder = OrderSummary & {
 export type FloorTable = {
   number: string;
   order: OrderSummary | null;
+  /** Guest QR requests awaiting staff review (0 when none / feature idle). */
+  pendingRequestCount: number;
 };
 
 export function isOrderType(value: string): value is OrderType {
@@ -84,6 +86,7 @@ export function floorTables(tableCount: number, openOrders: OrderSummary[]): Flo
   return [...numbers, ...extras].map((number) => ({
     number,
     order: byTable.get(number) ?? null,
+    pendingRequestCount: 0,
   }));
 }
 

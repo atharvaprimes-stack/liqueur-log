@@ -65,6 +65,7 @@ module.exports = {
         defaultChannel: 'table-requests',
       },
     ],
+    './plugins/withAndroidShareQueries',
   ],
   experiments: {
     typedRoutes: false,

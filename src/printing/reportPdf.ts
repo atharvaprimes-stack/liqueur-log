@@ -4,11 +4,13 @@ import { PDFDocument, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import type { ReportSheet, SheetBand, SheetCell, SheetColumn, SheetGroup, SheetTable, SummaryPair } from '../domain/reports';
 import { embedDocumentFont } from './pdfFont';
 
+/** ISO A4 in PDF points (210mm × 297mm). */
 const PAGE_WIDTH = 595.28;
 const PAGE_HEIGHT = 841.89;
-const MARGIN_X = 32;
-const MARGIN_TOP = 28;
-const FOOTER = 30;
+/** ~15mm side / top margins — standard for printable A4 reports. */
+const MARGIN_X = 42;
+const MARGIN_TOP = 40;
+const FOOTER = 36;
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN_X * 2;
 
 const INK = rgb(0.11, 0.09, 0.08);
@@ -201,7 +203,7 @@ function paintBandRows(painter: Painter, columns: SheetColumn[], group: SheetGro
   }
   for (const row of band.rows) {
     ensure(painter, 16, resume);
-    paintCells(painter, columns, row, 16, 8, false);
+    paintCells(painter, columns, row, 17, 8, false);
   }
 }
 
@@ -229,7 +231,7 @@ function paintNote(painter: Painter, text: string): void {
 }
 
 function paintColumns(painter: Painter, columns: SheetColumn[]): void {
-  const height = 18;
+  const height = 20;
   ensure(painter, height);
   const top = painter.y;
   painter.page.drawRectangle({
@@ -240,22 +242,36 @@ function paintColumns(painter: Painter, columns: SheetColumn[]): void {
     color: BAND,
   });
   let x = MARGIN_X;
-  for (const column of columns) {
+  columns.forEach((column, index) => {
     const width = CONTENT_WIDTH * column.width;
     const size = 8;
     const baseline = top - (height + size) / 2;
+    if (index > 0) {
+      painter.page.drawLine({
+        start: { x, y: top },
+        end: { x, y: top - height },
+        thickness: 0.35,
+        color: LINE,
+      });
+    }
     drawFitted(
       painter,
       column.text,
-      column.align === 'right' ? x + width - 4 : x + 4,
+      column.align === 'right' ? x + width - 5 : x + 5,
       baseline,
       size,
       MUTED,
-      width - 8,
+      width - 10,
       column.align,
     );
     x += width;
-  }
+  });
+  painter.page.drawLine({
+    start: { x: MARGIN_X, y: top - height },
+    end: { x: MARGIN_X + CONTENT_WIDTH, y: top - height },
+    thickness: 0.7,
+    color: LINE,
+  });
   painter.y = top - height;
 }
 
@@ -310,7 +326,7 @@ function paintCells(
   painter.page.drawLine({
     start: { x: MARGIN_X, y: top - height },
     end: { x: MARGIN_X + CONTENT_WIDTH, y: top - height },
-    thickness: total ? 0.7 : 0.3,
+    thickness: total ? 0.7 : 0.35,
     color: LINE,
   });
   let x = MARGIN_X;
@@ -318,14 +334,22 @@ function paintCells(
     const width = CONTENT_WIDTH * column.width;
     const cell = cells[index] ?? { text: '' };
     const color = cell.tone === 'danger' ? DANGER : cell.tone === 'muted' ? MUTED : INK;
+    if (index > 0) {
+      painter.page.drawLine({
+        start: { x, y: top },
+        end: { x, y: top - height },
+        thickness: 0.25,
+        color: LINE,
+      });
+    }
     drawFitted(
       painter,
       cell.text,
-      column.align === 'right' ? x + width - 4 : x + 4,
+      column.align === 'right' ? x + width - 5 : x + 5,
       top - (height + size) / 2,
       size,
       color,
-      width - 8,
+      width - 10,
       column.align,
     );
     x += width;
