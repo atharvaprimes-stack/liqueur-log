@@ -7,7 +7,7 @@ import {
   setSessionCredentials,
   setSessionInteractionAt,
 } from '../../security/sessionCredentials';
-import { getDatabase } from '../local/database';
+import { ensureLocalLedgerReset, getDatabase } from '../local/database';
 import { mapTenant, mapUser, normalizeTableCount, type LoginRow, type TenantRow, type UserRow } from '../local/rows';
 import { isDeviceOnline } from '../network';
 import {
@@ -87,6 +87,8 @@ export async function authenticate(mobileNumber: string, mpin: string): Promise<
 async function finishLogin(session: AuthSession, mobile: string, pin: string, mpinHash: string): Promise<AuthSession> {
   await persistSession(session, mpinHash);
   rememberCredentials(mobile, pin);
+  // Drop orphan local ledger rows left after a server wipe, then pull fresh.
+  await ensureLocalLedgerReset().catch(() => undefined);
   await syncNow().catch(() => undefined);
   return session;
 }

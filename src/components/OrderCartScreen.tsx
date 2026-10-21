@@ -25,8 +25,10 @@ import {
   type StockItem,
 } from '../domain/models/inventory';
 import { balancePaise, type OrderLine, type PaymentMethod } from '../domain/models/orders';
+import type { TableRequest } from '../domain/models/tableRequests';
 import { useBilling } from '../hooks/useBilling';
 import { useOrderCart, type CartTarget } from '../hooks/useOrderCart';
+import { useTableRequests } from '../hooks/useTableRequests';
 import { useVoiceSearch } from '../hooks/useVoiceSearch';
 import { useAuth } from '../context/AuthContext';
 import { useBottomInset } from '../navigation/bottomInset';
@@ -45,6 +47,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
   const bottomInset = useBottomInset();
   const cart = useOrderCart(target);
   const billing = useBilling();
+  const tableRequests = useTableRequests();
   const scrollRef = useRef<ScrollView>(null);
   const orderSectionOffset = useRef(0);
   const rowOffsets = useRef<Record<string, number>>({});
@@ -53,11 +56,16 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [shareNotice, setShareNotice] = useState<'failed' | 'downloaded' | 'printFailed' | null>(null);
   const [formError, setFormError] = useState<OrderErrorCode | null>(null);
+  const [requestNotice, setRequestNotice] = useState(false);
   const [focusLineId, setFocusLineId] = useState<string | null>(null);
+  const [requestBusyId, setRequestBusyId] = useState<string | null>(null);
   const order = cart.order;
   const editable = order?.status === 'OPEN';
   const searching = query.trim().length > 0;
   const busy = cart.busy;
+  const tableId = target.kind === 'table' ? target.tableId : order?.tableId;
+  const pendingRequests =
+    editable && tableId ? tableRequests.pendingForTable(tableId) : [];
 
   const voice = useVoiceSearch((transcript) => {
     setQuery(transcript);
@@ -135,11 +143,19 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
 
   const onCancel = useCallback(() => {
     if (order?.status === 'OPEN' && order.lines.length === 0) {
-      void cart.release().finally(() => leaveScreen(parent));
+      const closingTableId = order.orderType === 'TABLE' ? order.tableId : null;
+      void cart
+        .release()
+        .then((released) => {
+          if (released && closingTableId) {
+            void tableRequests.closeForTable(closingTableId);
+          }
+        })
+        .finally(() => leaveScreen(parent));
       return;
     }
     leaveScreen(parent);
-  }, [cart, order, parent]);
+  }, [cart, order, parent, tableRequests]);
 
   const onPayAndClose = useCallback(() => {
     if (!order || order.lines.length === 0) {
@@ -178,12 +194,92 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
     }
     try {
       await billing.collectAndClose(order.id, payment);
+      if (order.orderType === 'TABLE' && order.tableId) {
+        void tableRequests.closeForTable(order.tableId);
+      }
       setPaymentOpen(false);
       leaveScreen(parent);
     } catch {
       setPaymentOpen(true);
     }
   };
+
+  const onAcceptRequest = useCallback(
+    async (request: TableRequest) => {
+      if (!editable || busy || requestBusyId) {
+        return;
+      }
+      setRequestNotice(false);
+      setRequestBusyId(request.id);
+      try {
+        // Accept = add to CURRENT ORDER, then close the incoming request.
+        const next = await cart.addItem(request.itemId, request.quantity);
+        if (!next) {
+          setRequestNotice(true);
+          return;
+        }
+        await tableRequests.acceptRequest(request.id);
+        const newest = [...next.lines].reverse().find((line) => line.itemId === request.itemId);
+        if (newest) {
+          requestAnimationFrame(() => pulseLine(newest.id));
+        }
+      } finally {
+        setRequestBusyId(null);
+      }
+    },
+    [busy, cart, editable, pulseLine, requestBusyId, tableRequests],
+  );
+
+  const onRejectRequest = useCallback(
+    async (request: TableRequest) => {
+      if (!editable || busy || requestBusyId) {
+        return;
+      }
+      setRequestNotice(false);
+      setRequestBusyId(request.id);
+      try {
+        // Reject = dismiss only; never add to CURRENT ORDER.
+        const synced = await tableRequests.rejectRequest(request.id);
+        if (!synced) {
+          setRequestNotice(true);
+        }
+      } finally {
+        setRequestBusyId(null);
+      }
+    },
+    [busy, editable, requestBusyId, tableRequests],
+  );
+
+  const onAcceptAllRequests = useCallback(async () => {
+    if (!editable || busy || requestBusyId || pendingRequests.length === 0) {
+      return;
+    }
+    setRequestNotice(false);
+    setRequestBusyId('all');
+    try {
+      const acceptedIds: string[] = [];
+      let lastOrder = cart.order;
+      for (const request of pendingRequests) {
+        const next = await cart.addItem(request.itemId, request.quantity);
+        if (!next) {
+          setRequestNotice(true);
+          break;
+        }
+        acceptedIds.push(request.id);
+        lastOrder = next;
+      }
+      if (acceptedIds.length === 0) {
+        return;
+      }
+      await tableRequests.acceptRequests(acceptedIds);
+      const newest = lastOrder ? [...lastOrder.lines].reverse()[0] : null;
+      if (newest) {
+        requestAnimationFrame(() => pulseLine(newest.id));
+      }
+    } finally {
+      setRequestBusyId(null);
+    }
+  }, [busy, cart, editable, pendingRequests, pulseLine, requestBusyId, tableRequests]);
 
   const buildDraftPreview = billing.draftReceiptPreview;
   const draftPreview = useCallback(
@@ -365,6 +461,29 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                   {t(`billing.errors.${formError ?? cart.errorCode ?? billing.errorCode}`)}
                 </Text>
               ) : null}
+              {requestNotice ? (
+                <Text className="mt-2 text-sm text-danger">
+                  {t(cart.errorCode ? 'billing.requestAddFailed' : 'billing.requestUpdateFailed')}
+                </Text>
+              ) : null}
+
+              {editable && pendingRequests.length > 0 ? (
+                <IncomingRequestsPanel
+                  requests={pendingRequests}
+                  language={i18n.language}
+                  busy={busy || requestBusyId !== null}
+                  busyId={requestBusyId}
+                  onAccept={(request) => {
+                    void onAcceptRequest(request);
+                  }}
+                  onReject={(request) => {
+                    void onRejectRequest(request);
+                  }}
+                  onAcceptAll={() => {
+                    void onAcceptAllRequests();
+                  }}
+                />
+              ) : null}
 
               <Text className="mb-1.5 mt-3 text-xs font-semibold uppercase tracking-wide text-muted">
                 {serveCount > 0 ? t('billing.currentOrderCount', { count: serveCount }) : t('billing.currentOrder')}
@@ -539,6 +658,103 @@ function OrderHeader({ title, billId, total }: { title: string; billId: string; 
           {total}
         </Text>
       </View>
+    </View>
+  );
+}
+
+function IncomingRequestsPanel({
+  requests,
+  language,
+  busy,
+  busyId,
+  onAccept,
+  onReject,
+  onAcceptAll,
+}: {
+  requests: TableRequest[];
+  language: string;
+  busy: boolean;
+  busyId: string | null;
+  onAccept: (request: TableRequest) => void;
+  onReject: (request: TableRequest) => void;
+  onAcceptAll: () => void;
+}) {
+  const { t } = useTranslation();
+  const { palette } = useTheme();
+
+  return (
+    <View className="mt-3 overflow-hidden rounded-xl border border-line bg-surface">
+      <View
+        className="flex-row items-center justify-between gap-2 border-b border-line px-3 py-2.5"
+        style={{ backgroundColor: 'rgba(234, 179, 8, 0.15)' }}
+      >
+        <Text className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-wide text-ink">
+          {t('billing.incomingRequestsCount', { count: requests.length })}
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          disabled={busy}
+          onPress={onAcceptAll}
+          className="h-8 items-center justify-center rounded-md bg-accent px-2.5 disabled:opacity-50"
+        >
+          {busyId === 'all' ? (
+            <ActivityIndicator color={palette.accentInk} size="small" />
+          ) : (
+            <Text className="text-xs font-bold text-accent-ink">{t('billing.acceptAllRequests')}</Text>
+          )}
+        </Pressable>
+      </View>
+
+      {requests.map((request, index) => {
+        const names = itemNames(request, language);
+        const rowBusy = busyId === request.id;
+        return (
+          <View
+            key={request.id}
+            className={`px-3 py-2.5 ${index < requests.length - 1 ? 'border-b border-line' : ''}`}
+          >
+            <View className="flex-row items-start justify-between gap-2">
+              <View className="min-w-0 flex-1">
+                <Text className="text-sm font-semibold text-ink" numberOfLines={1}>
+                  {names.primary}
+                </Text>
+                <Text className="mt-0.5 text-xs text-muted" numberOfLines={1}>
+                  {t('billing.requestQty', { count: request.quantity })} · {formatInr(request.unitPrice)}
+                </Text>
+              </View>
+              <Text className="text-sm font-semibold text-ink">
+                {formatInr(Math.round(request.quantity * request.unitPrice * 100) / 100)}
+              </Text>
+            </View>
+            <View className="mt-2 flex-row gap-2">
+              <Pressable
+                accessibilityRole="button"
+                disabled={busy}
+                onPress={() => onReject(request)}
+                className="h-9 min-w-0 flex-1 items-center justify-center rounded-lg border border-line bg-canvas disabled:opacity-50"
+              >
+                {rowBusy ? (
+                  <ActivityIndicator color={palette.muted} size="small" />
+                ) : (
+                  <Text className="text-xs font-semibold text-muted">{t('billing.rejectRequest')}</Text>
+                )}
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={busy}
+                onPress={() => onAccept(request)}
+                className="h-9 min-w-0 flex-1 items-center justify-center rounded-lg bg-accent disabled:opacity-50"
+              >
+                {rowBusy ? (
+                  <ActivityIndicator color={palette.accentInk} size="small" />
+                ) : (
+                  <Text className="text-xs font-bold text-accent-ink">{t('billing.acceptRequest')}</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        );
+      })}
     </View>
   );
 }

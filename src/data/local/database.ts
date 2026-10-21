@@ -140,9 +140,102 @@ async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
   await ensureItemSerialNumbers(database);
   await ensureServiceStations(database);
   await assertSchemaReady(database);
+  await maybeResetLocalLedger(database);
 
   console.log('[sqlite] database ready', { path: database.databasePath });
   return database;
+}
+
+/**
+ * One-shot local wipe after a server-side test-data reset.
+ * Sync only upserts remote rows and applies tombstones; it does not remove
+ * orphan local ledger rows, so devices keep showing old catalog/orders until
+ * this clears them. Bump LEDGER_EPOCH when you need devices to wipe again.
+ */
+const LEDGER_EPOCH_KEY = 'ledger_epoch';
+const LEDGER_EPOCH = '2026-10-20-server-reset';
+
+/** Clears stale local ledger rows once after a server reset. Safe to call often. */
+export async function ensureLocalLedgerReset(): Promise<void> {
+  const database = await getDatabase();
+  await maybeResetLocalLedger(database);
+}
+
+async function maybeResetLocalLedger(database: SQLite.SQLiteDatabase): Promise<void> {
+  const row = await database.getFirstAsync<{ value: string }>(
+    'SELECT value FROM preferences WHERE key = ?',
+    [LEDGER_EPOCH_KEY],
+  );
+  if (row?.value === LEDGER_EPOCH) {
+    return;
+  }
+
+  console.log('[sqlite] wiping local ledger for epoch', LEDGER_EPOCH);
+  await wipeOperationalTables(database);
+  await database.runAsync(
+    `INSERT INTO preferences (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [LEDGER_EPOCH_KEY, LEDGER_EPOCH],
+  );
+}
+
+async function wipeOperationalTables(database: SQLite.SQLiteDatabase): Promise<void> {
+  await database.execAsync('PRAGMA foreign_keys = OFF');
+  try {
+    await database.execAsync(`
+      DROP TRIGGER IF EXISTS order_items_lock_delete;
+      DROP TRIGGER IF EXISTS orders_block_delete;
+      DROP TRIGGER IF EXISTS purchase_items_block_delete;
+      DROP TRIGGER IF EXISTS purchases_block_delete;
+    `);
+
+    await database.execAsync(`
+      DELETE FROM order_items;
+      DELETE FROM orders;
+      DELETE FROM purchase_items;
+      DELETE FROM purchases;
+      DELETE FROM stock_movements;
+      DELETE FROM activity_logs;
+      DELETE FROM order_sequences;
+      DELETE FROM items;
+      DELETE FROM item_types;
+      DELETE FROM item_strengths;
+      DELETE FROM vendors;
+      DELETE FROM sync_queue;
+      DELETE FROM sync_acks;
+    `);
+
+    await database.execAsync(`
+      CREATE TRIGGER IF NOT EXISTS purchases_block_delete
+      BEFORE DELETE ON purchases
+      BEGIN
+        SELECT RAISE(ABORT, 'purchase ledger entries cannot be changed');
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS purchase_items_block_delete
+      BEFORE DELETE ON purchase_items
+      BEGIN
+        SELECT RAISE(ABORT, 'purchase ledger entries cannot be changed');
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS orders_block_delete
+      BEFORE DELETE ON orders
+      WHEN OLD.status <> 'OPEN'
+        OR EXISTS (SELECT 1 FROM order_items WHERE order_id = OLD.id)
+      BEGIN
+        SELECT RAISE(ABORT, 'closed orders are read-only');
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS order_items_lock_delete
+      BEFORE DELETE ON order_items
+      WHEN (SELECT status FROM orders WHERE id = OLD.order_id) IS NOT 'OPEN'
+      BEGIN
+        SELECT RAISE(ABORT, 'closed orders are read-only');
+      END;
+    `);
+  } finally {
+    await database.execAsync('PRAGMA foreign_keys = ON');
+  }
 }
 
 async function assertSchemaReady(database: SQLite.SQLiteDatabase): Promise<void> {

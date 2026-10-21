@@ -21,6 +21,7 @@ import { orderErrorCode, type OrderErrorCode } from '../../../src/domain/errors'
 import { formatInr } from '../../../src/domain/money';
 import type { FloorTable } from '../../../src/domain/models/orders';
 import { useFloor } from '../../../src/hooks/useFloor';
+import { useTableRequests } from '../../../src/hooks/useTableRequests';
 import { resolveBottomInset } from '../../../src/navigation/bottomInset';
 import { useTheme } from '../../../src/theme/theme-context';
 import type { ThemeId, ThemePalette } from '../../../src/theme/themes';
@@ -116,13 +117,25 @@ export default function TablesScreen() {
   const insets = useSafeAreaInsets();
   const bottomInset = resolveBottomInset(insets.bottom);
   const { tables, counter, isLoading, errorCode, startTable } = useFloor();
+  const { summaryForTable } = useTableRequests();
   const [pending, setPending] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<OrderErrorCode | null>(null);
 
   const venueName = currentTenant?.businessName || t('appName');
-  const activeCount = useMemo(() => tables.filter((table) => table.order !== null).length, [tables]);
-  const totalCount = tables.length;
+  const floorTables = useMemo(
+    () =>
+      tables.map((table) => ({
+        ...table,
+        pendingRequestCount: summaryForTable(table.number)?.count ?? 0,
+      })),
+    [summaryForTable, tables],
+  );
+  const activeCount = useMemo(
+    () => floorTables.filter((table) => table.order !== null).length,
+    [floorTables],
+  );
+  const totalCount = floorTables.length;
 
   const confirmStart = async () => {
     if (!pending || starting) {
@@ -183,7 +196,7 @@ export default function TablesScreen() {
           ) : null}
 
           <View className="mt-3 flex-row flex-wrap">
-            {tables.map((table) => (
+            {floorTables.map((table) => (
               <View key={table.number} className="w-1/2 p-1.5">
                 <TableCard
                   table={table}
