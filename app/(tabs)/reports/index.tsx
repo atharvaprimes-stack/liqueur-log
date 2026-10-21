@@ -327,7 +327,9 @@ function A4PreviewModal({
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const bottomInset = resolveBottomInset(insets.bottom);
-  const paperWidth = Math.min(width - 24, 640);
+  // Preview card matches ISO A4 portrait proportions (210 × 297).
+  const paperWidth = Math.min(width - 24, 595);
+  const paperHeight = Math.round(paperWidth * (297 / 210));
   const actionsDisabled = Boolean(busy) || !sheet;
 
   return (
@@ -359,7 +361,7 @@ function A4PreviewModal({
         >
           {sheet ? (
             <View
-              style={{ width: paperWidth }}
+              style={{ width: paperWidth, minHeight: paperHeight }}
               className="overflow-hidden rounded-sm border border-line bg-surface px-5 py-6"
             >
               <Text className="text-center text-base font-semibold text-ink" numberOfLines={2}>
@@ -386,7 +388,7 @@ function A4PreviewModal({
                 <SummaryColumns left={sheet.summaryLeft} right={sheet.summaryRight} />
               ) : null}
 
-              <ReportTable table={sheet.table} paper />
+              <ReportTable table={sheet.table} paper paperWidth={paperWidth - 40} />
               <Text className="pt-4 text-[11px] leading-4 text-muted">{sheet.footnote}</Text>
             </View>
           ) : null}
@@ -674,65 +676,81 @@ function SummaryColumn({ pairs }: { pairs: SummaryPair[] }) {
   );
 }
 
-function ReportTable({ table, paper = false }: { table: SheetTable; paper?: boolean }) {
+function ReportTable({
+  table,
+  paper = false,
+  paperWidth,
+}: {
+  table: SheetTable;
+  paper?: boolean;
+  paperWidth?: number;
+}) {
   const { width } = useWindowDimensions();
   const tableWidth = paper
-    ? Math.max(Math.min(width - 64, 600), table.columns.length > 5 ? 560 : 440)
+    ? Math.max(paperWidth ?? Math.min(width - 64, 555), 280)
     : Math.max(width - 32, table.columns.length > 5 ? 720 : 560);
 
   if (table.empty) {
     return <Text className="pt-4 text-sm text-muted">{table.empty}</Text>;
   }
 
+  const tableBody = (
+    <View style={{ width: tableWidth }} className="overflow-hidden rounded-xl border border-line">
+      <TableCells columns={table.columns} cells={table.columns.map((column) => ({ text: column.text }))} header />
+      {table.groups.map((group, groupIndex) => (
+        <View key={`${group.title}-${groupIndex}`}>
+          {group.title ? (
+            <View className="border-b border-line bg-surface px-3 py-2">
+              <Text className="text-sm font-semibold text-ink" numberOfLines={2}>
+                {group.title}
+              </Text>
+              {group.note ? (
+                <Text className="pt-1 text-[12px] leading-4 text-muted" numberOfLines={3}>
+                  {group.note}
+                </Text>
+              ) : null}
+            </View>
+          ) : group.note ? (
+            <View className="border-b border-line bg-surface px-3 py-2">
+              <Text className="text-[12px] leading-4 text-muted" numberOfLines={3}>
+                {group.note}
+              </Text>
+            </View>
+          ) : null}
+          {group.bands.map((band, bandIndex) => (
+            <View key={`${group.title}-${bandIndex}`}>
+              {band.title ? (
+                <View className="border-b border-line px-3 py-1.5">
+                  <Text className="text-[12px] font-medium text-ink" numberOfLines={2}>
+                    {band.title}
+                  </Text>
+                </View>
+              ) : null}
+              {band.rows.map((row, rowIndex) => (
+                <TableCells key={`${group.title}-${bandIndex}-${rowIndex}`} columns={table.columns} cells={row} />
+              ))}
+            </View>
+          ))}
+          {group.total ? <TableCells columns={table.columns} cells={group.total} total /> : null}
+        </View>
+      ))}
+      {table.extra ? <TableCells columns={table.columns} cells={table.extra} /> : null}
+      {table.grand ? <TableCells columns={table.columns} cells={table.grand} total /> : null}
+    </View>
+  );
+
   return (
     <View className="mt-4">
       <Text className="text-base font-semibold text-ink" numberOfLines={1}>
         {table.title}
       </Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator className="mt-2">
-        <View style={{ width: tableWidth }} className="overflow-hidden rounded-xl border border-line">
-          <TableCells columns={table.columns} cells={table.columns.map((column) => ({ text: column.text }))} header />
-          {table.groups.map((group, groupIndex) => (
-            <View key={`${group.title}-${groupIndex}`}>
-              {group.title ? (
-                <View className="border-b border-line bg-surface px-3 py-2">
-                  <Text className="text-sm font-semibold text-ink" numberOfLines={2}>
-                    {group.title}
-                  </Text>
-                  {group.note ? (
-                    <Text className="pt-1 text-[12px] leading-4 text-muted" numberOfLines={3}>
-                      {group.note}
-                    </Text>
-                  ) : null}
-                </View>
-              ) : group.note ? (
-                <View className="border-b border-line bg-surface px-3 py-2">
-                  <Text className="text-[12px] leading-4 text-muted" numberOfLines={3}>
-                    {group.note}
-                  </Text>
-                </View>
-              ) : null}
-              {group.bands.map((band, bandIndex) => (
-                <View key={`${group.title}-${bandIndex}`}>
-                  {band.title ? (
-                    <View className="border-b border-line px-3 py-1.5">
-                      <Text className="text-[12px] font-medium text-ink" numberOfLines={2}>
-                        {band.title}
-                      </Text>
-                    </View>
-                  ) : null}
-                  {band.rows.map((row, rowIndex) => (
-                    <TableCells key={`${group.title}-${bandIndex}-${rowIndex}`} columns={table.columns} cells={row} />
-                  ))}
-                </View>
-              ))}
-              {group.total ? <TableCells columns={table.columns} cells={group.total} total /> : null}
-            </View>
-          ))}
-          {table.extra ? <TableCells columns={table.columns} cells={table.extra} /> : null}
-          {table.grand ? <TableCells columns={table.columns} cells={table.grand} total /> : null}
-        </View>
-      </ScrollView>
+      {paper ? (
+        <View className="mt-2">{tableBody}</View>
+      ) : (
+        <ScrollView horizontal showsHorizontalScrollIndicator className="mt-2">
+          {tableBody}
+        </ScrollView>
+      )}
     </View>
   );
 }
