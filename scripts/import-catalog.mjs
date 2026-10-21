@@ -293,7 +293,8 @@ function readWorkbook(filePath) {
   if (!fs.existsSync(filePath)) {
     throw new Error(`Workbook not found: ${filePath}`);
   }
-  const workbook = XLSX.readFile(filePath);
+  // xlsx ESM build exposes read(), not readFile()
+  const workbook = XLSX.read(fs.readFileSync(filePath), { type: 'buffer', cellDates: true });
 
   const types = parseNamedList(
     sheetRows(requireSheet(workbook, 'item_types'), ['name'], 'item_types'),

@@ -1,4 +1,4 @@
-import { Pressable, Text, View } from 'react-native';
+import { Platform, Pressable, Text, View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -17,6 +17,16 @@ export function DashboardHeader({ shopName, staffName, roleLabel, alertCount }: 
   const { t } = useTranslation();
   const { palette } = useTheme();
   const initials = avatarInitials(staffName || shopName);
+
+  const openAlerts = () => {
+    // Web keeps focus on this control after the home screen is aria-hidden.
+    blurActiveElement();
+    if (alertCount > 0) {
+      router.push({ pathname: '/stock', params: { focus: 'low', at: String(Date.now()) } });
+      return;
+    }
+    router.push('/stock');
+  };
 
   return (
     <View className="rounded-2xl border border-line bg-surface px-4 py-3.5" style={getCardShadow(palette)}>
@@ -37,11 +47,7 @@ export function DashboardHeader({ shopName, staffName, roleLabel, alertCount }: 
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={t('home.alerts')}
-          onPress={() =>
-            alertCount > 0
-              ? router.push({ pathname: '/stock', params: { focus: 'low', at: String(Date.now()) } })
-              : router.push('/stock')
-          }
+          onPress={openAlerts}
           className="h-10 w-10 items-center justify-center rounded-full border border-line bg-canvas"
         >
           <Ionicons name="notifications-outline" size={20} color={palette.ink} />
@@ -54,6 +60,16 @@ export function DashboardHeader({ shopName, staffName, roleLabel, alertCount }: 
       </View>
     </View>
   );
+}
+
+function blurActiveElement(): void {
+  if (Platform.OS !== 'web') {
+    return;
+  }
+  const active = globalThis.document?.activeElement;
+  if (active instanceof HTMLElement) {
+    active.blur();
+  }
 }
 
 function avatarInitials(name: string): string {

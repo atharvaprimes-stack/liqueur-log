@@ -5,10 +5,10 @@ type Translate = (key: string, values?: Record<string, string | number>) => stri
 
 const CATALOG_COLUMNS = (t: Translate): SheetColumn[] => [
   { text: t('reports.serial'), align: 'right', width: 0.1 },
+  { text: t('reports.code'), align: 'left', width: 0.18 },
+  { text: t('reports.name'), align: 'left', width: 0.38 },
   { text: t('reports.category'), align: 'left', width: 0.18 },
   { text: t('reports.type'), align: 'left', width: 0.16 },
-  { text: t('reports.name'), align: 'left', width: 0.38 },
-  { text: t('reports.code'), align: 'left', width: 0.18 },
 ];
 
 export function presentCatalogSheet(
@@ -54,10 +54,10 @@ function catalogTable(items: StockItem[], t: Translate, language: string): Sheet
 
   const rows: SheetCell[][] = items.map((item) => [
     { text: String(item.serialNo) },
+    { text: item.itemCode.trim() },
+    { text: itemNames(item, language).primary.trim() || '—' },
     { text: knownTermLabel('types', item.liquorType, t) },
     { text: item.subType.trim() ? knownTermLabel('subTypes', item.subType, t) : '—' },
-    { text: itemNames(item, language).primary.trim() || '—' },
-    { text: item.itemCode.trim() },
   ]);
 
   const group: SheetGroup = {
