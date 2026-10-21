@@ -76,7 +76,7 @@ export function StockEntryScreen() {
   const [vendorId, setVendorId] = useState<string | null>(null);
   const [vendorPickerOpen, setVendorPickerOpen] = useState(false);
   const [invoiceNumber, setInvoiceNumber] = useState('');
-  const [paymentType, setPaymentType] = useState<PaymentType | null>(null);
+  const [paymentType, setPaymentType] = useState<PaymentType | null>('Cash');
   const [amountPaid, setAmountPaid] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);

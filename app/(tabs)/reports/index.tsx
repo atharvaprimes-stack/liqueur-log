@@ -34,6 +34,7 @@ import { useReport } from '../../../src/hooks/useReport';
 import { resolveBottomInset } from '../../../src/navigation/bottomInset';
 import { buildReportPdf } from '../../../src/printing/reportPdf';
 import {
+  afterModalDismissed,
   printPdfDocument,
   savePdfDocument,
   sharePdfDocument,
@@ -131,22 +132,34 @@ export default function ReportsScreen() {
     }
     setBusy(action);
     setNotice(null);
+    const bundle = pdf;
+    // PrintManager / share sheets sit under RN Modal on Android — dismiss first.
+    const shouldHideModal = Platform.OS !== 'web' && (action === 'print' || action === 'share');
+    if (shouldHideModal) {
+      setPreviewOpen(false);
+      await afterModalDismissed();
+    }
     try {
       if (action === 'share') {
-        const result = await sharePdfDocument(pdf.bytes, pdf.fileName);
+        const result = await sharePdfDocument(bundle.bytes, bundle.fileName);
         if (result === 'downloaded') {
           setNotice(t('reports.downloaded'));
         } else if (result === 'unopened') {
           setNotice(t('reports.shareFailed'));
         }
+        setPreviewOpen(true);
       } else if (action === 'save') {
-        const result = await savePdfDocument(pdf.bytes, pdf.fileName);
+        const result = await savePdfDocument(bundle.bytes, bundle.fileName);
         setNotice(result === 'downloaded' ? t('reports.downloaded') : t('reports.saved'));
       } else {
-        await printPdfDocument(pdf.bytes, pdf.fileName);
+        await printPdfDocument(bundle.bytes, bundle.fileName);
+        // Leave preview closed on print — Android print UI would sit under the Modal.
       }
     } catch {
       setNotice(t('reports.failed'));
+      if (shouldHideModal) {
+        setPreviewOpen(true);
+      }
     } finally {
       setBusy(null);
     }

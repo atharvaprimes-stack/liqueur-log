@@ -57,6 +57,7 @@ module.exports = {
         speechRecognitionPermission: 'Allow Liqueur Log to turn speech into search text.',
       },
     ],
+    './plugins/withAndroidShareQueries',
   ],
   experiments: {
     typedRoutes: false,

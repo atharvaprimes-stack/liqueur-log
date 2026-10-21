@@ -114,6 +114,8 @@ export type StockSection = {
 };
 
 export type StockFacet = 'all' | 'low' | LiquorType;
+export const STOCK_STATUS_FILTERS = ['all', 'in_stock', 'low', 'out'] as const;
+export type StockStatusFilter = (typeof STOCK_STATUS_FILTERS)[number];
 
 const LARGE_STOCK_CHANGE = 10;
 
@@ -199,8 +201,35 @@ export function compactVolume(
   return { key: 'stock.volume.ml', values: { ml: item.volumeMl } };
 }
 
+export function isOutOfStock(item: Pick<StockItem, 'currentStock'>): boolean {
+  return item.currentStock === 0;
+}
+
 export function isLowStock(item: Pick<StockItem, 'currentStock' | 'lowStockThreshold'>): boolean {
   return item.currentStock <= item.lowStockThreshold;
+}
+
+/** On hand, but at or below the low-stock mark (excludes out of stock). */
+export function isRunningLow(item: Pick<StockItem, 'currentStock' | 'lowStockThreshold'>): boolean {
+  return item.currentStock > 0 && isLowStock(item);
+}
+
+/** Above the low-stock mark. */
+export function isInStock(item: Pick<StockItem, 'currentStock' | 'lowStockThreshold'>): boolean {
+  return item.currentStock > item.lowStockThreshold;
+}
+
+export function filterByStockStatus(items: StockItem[], status: StockStatusFilter): StockItem[] {
+  if (status === 'all') {
+    return items;
+  }
+  if (status === 'in_stock') {
+    return items.filter(isInStock);
+  }
+  if (status === 'low') {
+    return items.filter(isRunningLow);
+  }
+  return items.filter(isOutOfStock);
 }
 
 export function parseStockCount(input: string): number | null {
