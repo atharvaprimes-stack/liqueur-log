@@ -10,7 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Redirect, useLocalSearchParams } from 'expo-router';
+import { Redirect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
@@ -27,9 +27,6 @@ type EditorState = { mode: 'create' } | { mode: 'edit'; vendor: Vendor } | null;
 export default function ManageVendorsScreen() {
   const { t } = useTranslation();
   const { palette, themeStyle } = useTheme();
-  const params = useLocalSearchParams<{ returnTo?: string | string[] }>();
-  const requestedParent = Array.isArray(params.returnTo) ? params.returnTo[0] : params.returnTo;
-  const parent = requestedParent === '/stock/purchase' ? '/stock/purchase' : '/menu';
   const { currentUser, isReady } = useAuth();
   const { vendors, isLoading, errorCode, isAdmin, saveVendor, removeVendor } = useCatalog();
   const [query, setQuery] = useState('');
@@ -151,7 +148,7 @@ export default function ManageVendorsScreen() {
       </View>
       <ActionRow
         pinned
-        leading={{ label: t('common.cancel'), onPress: () => leaveScreen(parent) }}
+        leading={{ label: t('common.cancel'), onPress: () => leaveScreen('/menu') }}
         trailing={{ label: t('vendors.add'), onPress: openCreate, tone: 'accent' }}
       />
 

@@ -9,7 +9,9 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "build:apk": "powershell -ExecutionPolicy Bypass -File ./scripts/build-release-apk.ps1"
+    "build:apk": "powershell -ExecutionPolicy Bypass -File ./scripts/build-release-apk.ps1",
+    "catalog:template": "node scripts/create-catalog-template.mjs",
+    "catalog:import": "node scripts/import-catalog.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
@@ -50,6 +52,7 @@
   "devDependencies": {
     "@types/react": "~19.2.2",
     "tailwindcss": "^3.4.17",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "xlsx": "^0.18.5"
   }
 }

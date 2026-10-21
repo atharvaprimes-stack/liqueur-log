@@ -584,16 +584,14 @@ export async function deleteCatalogItem(input: {
 }): Promise<void> {
   await withLockedTransaction(async (database) => {
     await assertAdmin(database, input.tenantId, input.actorId);
-    const item = await database.getFirstAsync<{ item_code: string; current_stock: number }>(
-      'SELECT item_code, current_stock FROM items WHERE id = ? AND tenant_id = ?',
+    const item = await database.getFirstAsync<{ item_code: string }>(
+      'SELECT item_code FROM items WHERE id = ? AND tenant_id = ?',
       [input.itemId, input.tenantId],
     );
     if (!item) {
       throw new InventoryValidationError('unknown-item');
     }
-    if (Number(item.current_stock) > 0) {
-      throw new InventoryValidationError('has-stock');
-    }
+    // Stock no longer blocks delete (movements cascade). Bills/purchases still do (FK).
     const used = await database.getFirstAsync<{ id: string }>(
       `SELECT id FROM purchase_items WHERE item_id = ?
        UNION ALL

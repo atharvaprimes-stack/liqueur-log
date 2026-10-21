@@ -34,8 +34,7 @@ type PaymentSheetProps = {
   order: SaleOrder;
   submitting: boolean;
   errorCode: OrderErrorCode | null;
-  confirmLabel: string;
-  shareNotice: 'failed' | 'downloaded' | null;
+  shareNotice: 'failed' | 'downloaded' | 'printFailed' | null;
   draftPreview: (method: PaymentMethod) => BillPreview | null;
   onClose: () => void;
   onSubmit: (payment: { method: PaymentMethod; paidAmount: number }) => void;
@@ -48,7 +47,6 @@ export function PaymentSheet({
   order,
   submitting,
   errorCode,
-  confirmLabel,
   shareNotice,
   draftPreview,
   onClose,
@@ -116,7 +114,7 @@ export function PaymentSheet({
                 {COLLECT_METHODS.map((entry) => {
                   const selected = method === entry;
                   return (
-                    <SheetButton
+                    <MethodButton
                       key={entry}
                       label={t(`billing.methods.${entry}`)}
                       icon={METHOD_ICONS[entry]}
@@ -135,12 +133,23 @@ export function PaymentSheet({
               {shareNotice === 'failed' ? (
                 <Text className="mt-3 text-center text-sm text-danger">{t('billing.shareFailed')}</Text>
               ) : null}
+              {shareNotice === 'printFailed' ? (
+                <Text className="mt-3 text-center text-sm text-danger">{t('billing.printFailed')}</Text>
+              ) : null}
               {shareNotice === 'downloaded' ? (
                 <Text className="mt-3 text-center text-sm text-ink">{t('billing.downloaded')}</Text>
               ) : null}
 
-              <View className="mt-3 flex-row gap-3">
-                <SheetButton
+              <View className="mt-3 flex-row gap-2">
+                <ActionButton
+                  label={t('billing.cancel')}
+                  icon="close-outline"
+                  disabled={submitting}
+                  iconColor={palette.muted}
+                  muted
+                  onPress={onClose}
+                />
+                <ActionButton
                   label={t('billing.print')}
                   icon="print-outline"
                   disabled={submitting || !preview}
@@ -151,9 +160,9 @@ export function PaymentSheet({
                     }
                   }}
                 />
-                <SheetButton
+                <ActionButton
                   label={t('billing.share')}
-                  icon="logo-whatsapp"
+                  icon="share-social-outline"
                   disabled={submitting || !preview}
                   iconColor={palette.ink}
                   onPress={() => {
@@ -162,19 +171,8 @@ export function PaymentSheet({
                     }
                   }}
                 />
-              </View>
-
-              <View className="mt-3 flex-row gap-3">
-                <SheetButton
-                  label={t('billing.cancel')}
-                  icon="close-outline"
-                  disabled={submitting}
-                  iconColor={palette.muted}
-                  muted
-                  onPress={onClose}
-                />
-                <SheetButton
-                  label={confirmLabel}
+                <ActionButton
+                  label={t('billing.close')}
                   icon="checkmark-circle-outline"
                   selected
                   disabled={submitting}
@@ -191,10 +189,43 @@ export function PaymentSheet({
   );
 }
 
-const SHEET_BUTTON_CLASS =
-  'h-12 min-w-0 flex-1 flex-row items-center justify-center gap-1.5 rounded-xl border px-2 disabled:opacity-50';
+function MethodButton({
+  label,
+  icon,
+  onPress,
+  disabled = false,
+  selected = false,
+  iconColor,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  disabled?: boolean;
+  selected?: boolean;
+  iconColor: string;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected, disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      className={`h-12 min-w-0 flex-1 flex-row items-center justify-center gap-1.5 rounded-xl border px-2 disabled:opacity-50 ${
+        selected ? 'border-accent bg-accent' : 'border-line bg-canvas'
+      }`}
+    >
+      <Ionicons name={icon} size={18} color={iconColor} />
+      <Text
+        className={`text-sm font-semibold ${selected ? 'text-accent-ink' : 'text-ink'}`}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
 
-function SheetButton({
+function ActionButton({
   label,
   icon,
   onPress,
@@ -216,10 +247,13 @@ function SheetButton({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={label}
       accessibilityState={{ selected, disabled }}
       disabled={disabled}
       onPress={onPress}
-      className={`${SHEET_BUTTON_CLASS} ${selected ? 'border-accent bg-accent' : 'border-line bg-canvas'}`}
+      className={`h-14 min-w-0 flex-1 items-center justify-center gap-0.5 rounded-xl border px-1 disabled:opacity-50 ${
+        selected ? 'border-accent bg-accent' : 'border-line bg-canvas'
+      }`}
     >
       {busy ? (
         <ActivityIndicator color={iconColor} />
@@ -227,7 +261,7 @@ function SheetButton({
         <>
           <Ionicons name={icon} size={18} color={iconColor} />
           <Text
-            className={`text-sm font-semibold ${
+            className={`text-[11px] font-semibold ${
               selected ? 'text-accent-ink' : muted ? 'text-muted' : 'text-ink'
             }`}
             numberOfLines={1}

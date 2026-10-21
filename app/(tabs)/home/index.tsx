@@ -19,7 +19,8 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const { snapshot, isLoading, error, reload } = useDashboard();
   const shopName = currentTenant?.businessName || t('appName');
-  const alertCount = snapshot ? snapshot.lowCount + snapshot.outCount : 0;
+  const lowCount = snapshot?.lowCount ?? 0;
+  const outCount = snapshot?.outCount ?? 0;
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -48,7 +49,8 @@ export default function HomeScreen() {
             shopName={shopName}
             staffName={currentUser?.name ?? ''}
             roleLabel={currentUser ? t(`roles.${currentUser.role}`) : ''}
-            alertCount={alertCount}
+            lowCount={lowCount}
+            outCount={outCount}
           />
 
           {error ? <Text className="text-sm text-danger">{t('home.loadError')}</Text> : null}

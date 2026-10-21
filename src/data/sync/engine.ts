@@ -6,8 +6,9 @@ import { isDeviceOnline } from '../network';
 import { pullSyncSnapshot, pushSyncBatch } from '../remote/ledgerRemote';
 import { pushPendingUsers } from '../remote/syncStaff';
 import { isSupabaseConfigured } from '../remote/supabaseClient';
+import { enqueueUpsert } from './outbox';
 import { applySnapshot } from './merge';
-import type { SyncChange } from './snapshot';
+import { textField, type SyncChange, type SyncSnapshot } from './snapshot';
 
 const CHUNK_SIZE = 80
 const RETRY_DELAY_MS = 4000;
@@ -19,6 +20,9 @@ const UPSERT_PHASES = [
 ] as const;
 
 const DELETE_ENTITIES = ['items', 'item_types', 'item_strengths', 'vendors', 'orders'] as const;
+
+/** Catalog tables that were previously false-acked on unique_violation. */
+const CATALOG_ENTITIES = ['item_types', 'item_strengths', 'vendors', 'items'] as const;
 
 let flushing: Promise<void> | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -81,17 +85,57 @@ async function runSync(): Promise<void> {
     await pushPhase(credentials.mobileNumber, credentials.mpin, tenantId, entities, 'upsert');
   }
   await pushPhase(credentials.mobileNumber, credentials.mpin, tenantId, DELETE_ENTITIES, 'delete');
-  await pullTenant(credentials.mobileNumber, credentials.mpin, tenantId);
+  const requeued = await pullTenant(credentials.mobileNumber, credentials.mpin, tenantId);
+  // Rows false-acked before the server fix need a second push after re-queue.
+  if (requeued > 0) {
+    await pushPhase(credentials.mobileNumber, credentials.mpin, tenantId, CATALOG_ENTITIES, 'upsert');
+    await pullTenant(credentials.mobileNumber, credentials.mpin, tenantId);
+  }
 }
 
-async function pullTenant(mobileNumber: string, mpin: string, tenantId: string): Promise<void> {
+async function pullTenant(mobileNumber: string, mpin: string, tenantId: string): Promise<number> {
   const snapshot = await pullSyncSnapshot(mobileNumber, mpin);
   if (!snapshot) {
-    return;
+    return 0;
   }
-  await withLockedTransaction(async (database) => {
+  return withLockedTransaction(async (database) => {
     await applySnapshot(database, tenantId, snapshot);
+    return requeueCatalogMissingFromRemote(database, tenantId, snapshot);
   });
+}
+
+/**
+ * Local catalog rows that never landed remotely (false sync ack) are re-queued.
+ * Snapshot id set is the source of truth for what the server currently has.
+ */
+async function requeueCatalogMissingFromRemote(
+  database: SQLiteDatabase,
+  tenantId: string,
+  snapshot: SyncSnapshot,
+): Promise<number> {
+  const remoteIds: Record<(typeof CATALOG_ENTITIES)[number], Set<string>> = {
+    item_types: new Set((snapshot.item_types ?? []).map((row) => textField(row, 'id')).filter(Boolean)),
+    item_strengths: new Set((snapshot.item_strengths ?? []).map((row) => textField(row, 'id')).filter(Boolean)),
+    vendors: new Set((snapshot.vendors ?? []).map((row) => textField(row, 'id')).filter(Boolean)),
+    items: new Set((snapshot.items ?? []).map((row) => textField(row, 'id')).filter(Boolean)),
+  };
+
+  let requeued = 0;
+  for (const entity of CATALOG_ENTITIES) {
+    const rows = await database.getAllAsync<{ id: string }>(
+      `SELECT id FROM ${entity} WHERE tenant_id = ?`,
+      [tenantId],
+    );
+    for (const row of rows) {
+      if (!row.id || remoteIds[entity].has(row.id)) {
+        continue;
+      }
+      await database.runAsync('DELETE FROM sync_acks WHERE entity = ? AND entity_id = ?', [entity, row.id]);
+      await enqueueUpsert(database, entity, row.id);
+      requeued += 1;
+    }
+  }
+  return requeued;
 }
 
 async function pushPhase(
