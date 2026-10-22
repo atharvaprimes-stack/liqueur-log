@@ -6,6 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, SessionTimeoutProvider } from '../src/context/AuthContext';
 import { TableRequestsProvider } from '../src/context/TableRequestsContext';
 import { ThemeProvider } from '../src/context/ThemeContext';
+import { ReceiptCaptureHost } from '../src/printing/ReceiptCaptureHost';
 import '../src/i18n';
 
 const styleSheet = StyleSheet as typeof StyleSheet & {
@@ -21,6 +22,7 @@ export default function RootLayout() {
           <TableRequestsProvider>
             <SessionTimeoutProvider>
               <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: 'transparent' } }} />
+              <ReceiptCaptureHost />
             </SessionTimeoutProvider>
           </TableRequestsProvider>
         </AuthProvider>

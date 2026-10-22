@@ -65,6 +65,13 @@ module.exports = {
         defaultChannel: 'table-requests',
       },
     ],
+    [
+      'react-native-thermal-printer-driver',
+      {
+        bluetoothAlwaysPermission:
+          'Allow Liqueur Log to connect to your 58mm thermal receipt printer over Bluetooth.',
+      },
+    ],
     './plugins/withAndroidShareQueries',
   ],
   experiments: {
@@ -76,6 +83,11 @@ module.exports = {
       'android.permission.RECORD_AUDIO',
       'android.permission.POST_NOTIFICATIONS',
       'android.permission.VIBRATE',
+      'android.permission.BLUETOOTH',
+      'android.permission.BLUETOOTH_ADMIN',
+      'android.permission.BLUETOOTH_CONNECT',
+      'android.permission.BLUETOOTH_SCAN',
+      'android.permission.ACCESS_FINE_LOCATION',
     ],
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',

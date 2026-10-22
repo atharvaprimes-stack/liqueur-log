@@ -95,8 +95,14 @@ export default function MenuScreen() {
             icon="person-circle-outline"
             title={t('menu.account')}
             hint={t('menu.accountHint')}
-            isLast
             onPress={() => router.push('/menu/account')}
+          />
+          <SettingLink
+            icon="print-outline"
+            title={t('menu.printer')}
+            hint={t('menu.printerHint')}
+            isLast
+            onPress={() => router.push('/menu/printer')}
           />
         </View>
 
@@ -192,6 +198,7 @@ function SettingLink({
 }: {
   icon:
     | 'person-circle-outline'
+    | 'print-outline'
     | 'business-outline'
     | 'grid-outline'
     | 'pricetag-outline'

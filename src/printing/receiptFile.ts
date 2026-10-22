@@ -63,6 +63,15 @@ export async function printReceipt(receipt: ReceiptPayload, copy: ReceiptCopy): 
     await printReceiptHtml(document.html);
     return;
   }
+  // Registered 58mm Bluetooth thermal (e.g. Posiflow PSF588) — ESC/POS, no system dialog.
+  const thermal = await import('./thermalPrint');
+  if (await thermal.hasThermalPrinter()) {
+    const printed = await thermal.printThermalReceipt(receipt, copy);
+    if (!printed) {
+      throw new Error('thermal-print');
+    }
+    return;
+  }
   const pdf = await buildReceiptPdf(receipt, copy);
   await printPdfDocument(pdf.bytes, pdf.fileName);
 }
