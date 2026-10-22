@@ -595,7 +595,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
             order={order}
             submitting={billing.isSubmitting}
             errorCode={billing.errorCode}
-            shareNotice={shareNotice}
+            shareNotice={shareNotice === 'printFailed' ? 'printFailed' : null}
             draftPreview={draftPreview}
             onClose={() => {
               if (!billing.isSubmitting) {
@@ -617,20 +617,6 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                 if (!ok) {
                   setPaymentOpen(true);
                   setShareNotice('printFailed');
-                }
-              })();
-            }}
-            onShare={(preview) => {
-              void (async () => {
-                setShareNotice(null);
-                setPaymentOpen(false);
-                await afterModalDismissed();
-                const result = await billing.sharePreview(preview);
-                setPaymentOpen(true);
-                if (result === 'downloaded') {
-                  setShareNotice('downloaded');
-                } else if (result === 'unopened' || result === 'error') {
-                  setShareNotice('failed');
                 }
               })();
             }}
