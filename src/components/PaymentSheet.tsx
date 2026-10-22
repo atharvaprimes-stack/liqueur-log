@@ -34,12 +34,11 @@ type PaymentSheetProps = {
   order: SaleOrder;
   submitting: boolean;
   errorCode: OrderErrorCode | null;
-  shareNotice: 'failed' | 'downloaded' | 'printFailed' | null;
+  shareNotice: 'printFailed' | null;
   draftPreview: (method: PaymentMethod) => BillPreview | null;
   onClose: () => void;
   onSubmit: (payment: { method: PaymentMethod; paidAmount: number }) => void;
   onPrint: (preview: BillPreview) => void;
-  onShare: (preview: BillPreview) => void;
 };
 
 export function PaymentSheet({
@@ -52,7 +51,6 @@ export function PaymentSheet({
   onClose,
   onSubmit,
   onPrint,
-  onShare,
 }: PaymentSheetProps) {
   const { t } = useTranslation();
   const { palette, themeStyle } = useTheme();
@@ -130,14 +128,8 @@ export function PaymentSheet({
               {errorCode ? (
                 <Text className="mt-3 text-center text-sm text-danger">{t(`billing.errors.${errorCode}`)}</Text>
               ) : null}
-              {shareNotice === 'failed' ? (
-                <Text className="mt-3 text-center text-sm text-danger">{t('billing.shareFailed')}</Text>
-              ) : null}
               {shareNotice === 'printFailed' ? (
                 <Text className="mt-3 text-center text-sm text-danger">{t('billing.printFailed')}</Text>
-              ) : null}
-              {shareNotice === 'downloaded' ? (
-                <Text className="mt-3 text-center text-sm text-ink">{t('billing.downloaded')}</Text>
               ) : null}
 
               <View className="mt-3 flex-row gap-2">
@@ -157,17 +149,6 @@ export function PaymentSheet({
                   onPress={() => {
                     if (preview) {
                       onPrint(preview);
-                    }
-                  }}
-                />
-                <ActionButton
-                  label={t('billing.share')}
-                  icon="share-social-outline"
-                  disabled={submitting || !preview}
-                  iconColor={palette.ink}
-                  onPress={() => {
-                    if (preview) {
-                      onShare(preview);
                     }
                   }}
                 />
