@@ -7,6 +7,7 @@ import {
   parseCatalogTerm,
   parseVendor,
   resolveServiceStation,
+  suggestNextInvoiceNumber,
   type CatalogItemInput,
   type CatalogTerm,
   type PurchaseFormInput,
@@ -194,6 +195,28 @@ export async function correctItemStock(input: {
     throw new InventoryValidationError('unknown');
   }
   return updated;
+}
+
+/** Next sequential bill number for a supplier, based on existing purchase invoices. */
+export async function suggestNextInvoiceForSupplier(
+  tenantId: string,
+  supplierName: string,
+): Promise<string> {
+  const name = supplierName.trim();
+  if (!name) {
+    return suggestNextInvoiceNumber([]);
+  }
+
+  return withDatabase(async (database) => {
+    const rows = await database.getAllAsync<{ invoice_number: string }>(
+      `SELECT invoice_number
+       FROM purchases
+       WHERE tenant_id = ?
+         AND supplier_name = ? COLLATE NOCASE`,
+      [tenantId, name],
+    );
+    return suggestNextInvoiceNumber(rows.map((row) => row.invoice_number));
+  });
 }
 
 export async function recordPurchase(
@@ -488,7 +511,7 @@ export async function createCatalogItem(input: {
         `INSERT INTO items (
            id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
            service_station, volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           itemId,
           input.tenantId,
@@ -503,6 +526,7 @@ export async function createCatalogItem(input: {
           draft.volumeMl,
           draft.purchasePrice,
           draft.sellingPrice,
+          draft.initialStock,
           draft.lowStockThreshold,
           now,
         ],
@@ -514,8 +538,30 @@ export async function createCatalogItem(input: {
         action: 'catalog.create',
         entity: 'items',
         entityId: itemId,
-        detail: { itemCode: draft.itemCode },
+        detail: { itemCode: draft.itemCode, initialStock: draft.initialStock },
       });
+      if (draft.initialStock > 0) {
+        const adjustId = await insertActivity(database, {
+          tenantId: input.tenantId,
+          actorId: input.actorId,
+          action: 'stock.adjust',
+          entity: 'items',
+          entityId: itemId,
+          detail: {
+            itemCode: draft.itemCode,
+            previousStock: 0,
+            delta: draft.initialStock,
+            currentStock: draft.initialStock,
+          },
+        });
+        await recordAdjustment(database, {
+          id: adjustId,
+          tenantId: input.tenantId,
+          itemId,
+          delta: draft.initialStock,
+          createdAt: now,
+        });
+      }
     });
     requestSync();
   } catch (error) {

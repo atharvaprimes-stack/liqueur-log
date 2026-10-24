@@ -2,7 +2,13 @@ import { useCallback, useRef, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 
 import { useAuth } from '../context/auth-context';
-import { correctItemStock, listCatalogTerms, listStock, recordPurchase } from '../data/repositories/inventoryRepository';
+import {
+  correctItemStock,
+  listCatalogTerms,
+  listStock,
+  recordPurchase,
+  suggestNextInvoiceForSupplier,
+} from '../data/repositories/inventoryRepository';
 import { InventoryAccessError, InventoryValidationError, inventoryErrorCode, type InventoryErrorCode } from '../domain/errors';
 import { type PurchaseFormInput, type StockItem } from '../domain/models/inventory';
 
@@ -15,6 +21,7 @@ export function useInventory(): {
   correctStock: (itemId: string, nextStock: number) => Promise<void>;
   reload: () => Promise<void>;
   savePurchase: (form: PurchaseFormInput) => Promise<void>;
+  suggestNextInvoice: (supplierName: string) => Promise<string>;
 } {
   const { currentUser } = useAuth();
   const tenantId = currentUser?.tenantId ?? null;
@@ -139,6 +146,16 @@ export function useInventory(): {
     [actorId, isAdmin, tenantId],
   );
 
+  const suggestNextInvoice = useCallback(
+    async (supplierName: string) => {
+      if (!tenantId) {
+        return '1';
+      }
+      return suggestNextInvoiceForSupplier(tenantId, supplierName);
+    },
+    [tenantId],
+  );
+
   return {
     items,
     itemTypes,
@@ -148,5 +165,6 @@ export function useInventory(): {
     correctStock,
     reload,
     savePurchase,
+    suggestNextInvoice,
   };
 }

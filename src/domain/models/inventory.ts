@@ -3,6 +3,8 @@ import { parseQuantity, parseRupeeToPaise } from '../money';
 
 export const DEFAULT_ITEM_TYPES = ['IMFL', 'Beer', 'Wine', 'Foreign', 'Country', 'Snacks'] as const;
 export const DEFAULT_ITEM_STRENGTHS = ['Strong', 'Mild'] as const;
+/** Catch-all supplier pre-selected on Stock Entry when present in the vendor catalog. */
+export const DEFAULT_SUPPLIER_NAME = 'NA';
 export const PAYMENT_TYPES = ['Cash', 'Partial', 'Credit'] as const;
 export const STOCK_PICKER_CATEGORIES = ['all', 'liquor', 'beer', 'kitchen'] as const;
 export const SERVICE_STATIONS = ['bar', 'kitchen'] as const;
@@ -49,6 +51,8 @@ export type CatalogItemInput = {
   volumeMl: string;
   purchasePrice: string;
   sellingPrice: string;
+  /** Opening on-hand count when creating; ignored on update. */
+  initialStock: string;
   lowStockThreshold: string;
 };
 
@@ -63,6 +67,7 @@ export type CatalogItemDraft = {
   volumeMl: number;
   purchasePrice: number;
   sellingPrice: number;
+  initialStock: number;
   lowStockThreshold: number;
 };
 
@@ -137,6 +142,53 @@ export function isPaymentType(value: string): value is PaymentType {
   return PAYMENT_TYPES.some((type) => type === value);
 }
 
+export function isDefaultSupplierName(name: string): boolean {
+  return name.trim().toLowerCase() === DEFAULT_SUPPLIER_NAME.toLowerCase();
+}
+
+/**
+ * Suggest the next invoice/bill number for a supplier from prior invoice strings.
+ * Prefers incrementing the highest trailing numeric suffix (preserving prefix + zero-padding).
+ * Falls back to "1" when there is no usable history.
+ */
+export function suggestNextInvoiceNumber(existingInvoices: readonly string[]): string {
+  let best: { prefix: string; value: number; width: number } | null = null;
+
+  for (const raw of existingInvoices) {
+    const value = raw.trim();
+    if (!value) {
+      continue;
+    }
+    const match = /^(.*?)(\d+)$/.exec(value);
+    if (!match) {
+      continue;
+    }
+    const prefix = match[1] ?? '';
+    const digits = match[2] ?? '';
+    const numeric = Number(digits);
+    if (!Number.isSafeInteger(numeric) || numeric < 0) {
+      continue;
+    }
+    if (
+      !best ||
+      numeric > best.value ||
+      (numeric === best.value && digits.length > best.width)
+    ) {
+      best = { prefix, value: numeric, width: digits.length };
+    }
+  }
+
+  if (!best) {
+    return '1';
+  }
+
+  const next = best.value + 1;
+  if (!Number.isSafeInteger(next)) {
+    return '1';
+  }
+  return `${best.prefix}${String(next).padStart(best.width, '0')}`;
+}
+
 export function itemNames(item: Pick<StockItem, 'nameEn' | 'nameMr'>, language: string): {
   primary: string;
   secondary: string;
@@ -153,6 +205,12 @@ export function isServiceStation(value: string): value is ServiceStation {
 
 export function defaultServiceStation(liquorType: string): ServiceStation {
   return liquorType.trim().toLowerCase() === 'snacks' ? 'kitchen' : 'bar';
+}
+
+/** Bottle size applies to Mild/Strong; NA (and other strengths) skip volume. */
+export function strengthRequiresVolume(subType: string): boolean {
+  const key = subType.trim().toLowerCase();
+  return key === 'mild' || key === 'strong';
 }
 
 export function resolveServiceStation(
@@ -547,10 +605,23 @@ export function parseCatalogItem(input: CatalogItemInput): CatalogItemDraft {
   const subType = cleanLabel(input.subType, 'type');
   const serviceStation = resolveServiceStation(input.serviceStation, liquorType);
 
-  const volumeText = input.volumeMl.trim();
-  const volumeMl = Number(volumeText);
-  if (!/^\d{1,5}$/.test(volumeText) || !Number.isInteger(volumeMl) || volumeMl < 1 || volumeMl > 20000) {
-    throw new InventoryValidationError('volume');
+  let volumeMl: number;
+  if (!strengthRequiresVolume(subType)) {
+    // NA (and similar): volume is hidden in the form. Keep a valid stored size when
+    // editing an existing item; default to 1 for new items with an empty field.
+    const volumeText = input.volumeMl.trim();
+    if (/^\d{1,5}$/.test(volumeText)) {
+      const parsed = Number(volumeText);
+      volumeMl = Number.isInteger(parsed) && parsed >= 1 && parsed <= 20000 ? parsed : 1;
+    } else {
+      volumeMl = 1;
+    }
+  } else {
+    const volumeText = input.volumeMl.trim();
+    volumeMl = Number(volumeText);
+    if (!/^\d{1,5}$/.test(volumeText) || !Number.isInteger(volumeMl) || volumeMl < 1 || volumeMl > 20000) {
+      throw new InventoryValidationError('volume');
+    }
   }
 
   const purchasePaise = parseRupeeToPaise(input.purchasePrice);
@@ -568,6 +639,12 @@ export function parseCatalogItem(input: CatalogItemInput): CatalogItemDraft {
     throw new InventoryValidationError('threshold');
   }
 
+  const stockText = (input.initialStock ?? '0').trim() || '0';
+  const initialStock = Number(stockText);
+  if (!/^\d{1,4}$/.test(stockText) || !Number.isInteger(initialStock) || initialStock > 9999) {
+    throw new InventoryValidationError('quantity');
+  }
+
   return {
     itemCode,
     nameEn,
@@ -579,6 +656,7 @@ export function parseCatalogItem(input: CatalogItemInput): CatalogItemDraft {
     volumeMl,
     purchasePrice: purchasePaise / 100,
     sellingPrice: sellingPaise / 100,
+    initialStock,
     lowStockThreshold,
   };
 }

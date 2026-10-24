@@ -21,6 +21,7 @@ import { SupplierPicker } from './SupplierPicker';
 import { useAuth } from '../context/AuthContext';
 import { inventoryErrorCode } from '../domain/errors';
 import {
+  isDefaultSupplierName,
   PAYMENT_TYPES,
   summarizeDraft,
   type DraftLine,
@@ -69,10 +70,12 @@ export function StockEntryScreen() {
   const { t } = useTranslation();
   const { palette } = useTheme();
   const { currentUser, isReady } = useAuth();
-  const { items, isLoading, errorCode, savePurchase } = useInventory();
+  const { items, isLoading, errorCode, savePurchase, suggestNextInvoice } = useInventory();
   const { vendors, isLoading: vendorsLoading } = useVendors();
   const params = useLocalSearchParams<{ itemIds?: string | string[]; itemId?: string | string[] }>();
   const seededKey = useRef<string | null>(null);
+  /** Tracks which supplier the current auto-suggested invoice belongs to. */
+  const invoiceForSupplierKey = useRef<string | null>(null);
   const [vendorId, setVendorId] = useState<string | null>(null);
   const [vendorPickerOpen, setVendorPickerOpen] = useState(false);
   const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -111,10 +114,41 @@ export function StockEntryScreen() {
       setVendorId(null);
       return;
     }
-    if (!vendorId && vendors.length === 1) {
-      setVendorId(vendors[0].id);
+    // Prefer catch-all "NA" on first load; do not auto-pick an arbitrary single vendor.
+    if (!vendorId && vendors.length > 0) {
+      const defaultVendor = vendors.find((entry) => isDefaultSupplierName(entry.name));
+      if (defaultVendor) {
+        setVendorId(defaultVendor.id);
+      }
     }
   }, [vendorId, vendors]);
+
+  useEffect(() => {
+    if (!vendor) {
+      invoiceForSupplierKey.current = null;
+      return;
+    }
+    const supplierKey = vendor.name.trim().toLowerCase();
+    if (invoiceForSupplierKey.current === supplierKey) {
+      return;
+    }
+    invoiceForSupplierKey.current = supplierKey;
+    let active = true;
+    void suggestNextInvoice(vendor.name)
+      .then((next) => {
+        if (active) {
+          setInvoiceNumber(next);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setInvoiceNumber('1');
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [suggestNextInvoice, vendor]);
 
   useEffect(() => {
     if (seedItemIds.length === 0) {
@@ -261,7 +295,10 @@ export function StockEntryScreen() {
                 <Text className="mb-1.5 text-xs font-semibold text-muted">{t('stock.purchase.invoice')}</Text>
                 <TextInput
                   value={invoiceNumber}
-                  onChangeText={setInvoiceNumber}
+                  onChangeText={(value) => {
+                    setInvoiceNumber(value);
+                    setFormError(null);
+                  }}
                   placeholder={t('stock.purchase.invoicePlaceholder')}
                   placeholderTextColor={palette.muted}
                   autoCapitalize="characters"
@@ -454,6 +491,10 @@ export function StockEntryScreen() {
         selectedId={vendorId}
         onClose={() => setVendorPickerOpen(false)}
         onSelect={(nextId) => {
+          // Reset invoice tracking so changing supplier reloads that supplier's next bill number.
+          if (nextId !== vendorId) {
+            invoiceForSupplierKey.current = null;
+          }
           setVendorId(nextId);
           setVendorPickerOpen(false);
           setFormError(null);
