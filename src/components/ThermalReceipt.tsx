@@ -1,4 +1,4 @@
-import { Image, Platform, Text, View } from 'react-native';
+import { Platform, Text, View } from 'react-native';
 
 import {
   formatBillStamp,
@@ -9,93 +9,113 @@ import {
   type ReceiptPayload,
 } from '../domain/billing';
 import type { ReceiptCopy } from '../domain/receiptDocument';
-import { RECEIPT_QR_SIZE, RECEIPT_QR_SOURCE } from '../printing/receiptQr';
+import type { PrintFontSize } from '../printing/printFontSize';
+import type { PrintPaperWidth } from '../printing/printPaperWidth';
+import { PREVIEW_TYPE, printTypeScale, type TypeScale } from '../printing/printTypeScale';
 
-const DASH = '-'.repeat(48);
-const EQUALS = '='.repeat(48);
+type ReceiptVariant = 'preview' | 'print';
 
-/** 58mm at 160 dp per inch. NativeWind drops mm and in, so the slip sets this width directly. */
-const SLIP_WIDTH_DP = Math.round((58 / 25.4) * 160);
-
-export function ThermalReceipt({ receipt, copy }: { receipt: ReceiptPayload; copy: ReceiptCopy }) {
+export function ThermalReceipt({
+  receipt,
+  copy,
+  variant = 'preview',
+  printFontSize = 'small',
+  printPaperWidth = 58,
+}: {
+  receipt: ReceiptPayload;
+  copy: ReceiptCopy;
+  variant?: ReceiptVariant;
+  /** Used only when `variant` is `print`. Default matches current Small. */
+  printFontSize?: PrintFontSize;
+  /** Used only when `variant` is `print`. Default 58 keeps existing slips. */
+  printPaperWidth?: PrintPaperWidth;
+}) {
+  const type = variant === 'print' ? printTypeScale(printFontSize, printPaperWidth) : PREVIEW_TYPE;
+  const dash = '-'.repeat(type.dashLen);
+  const equals = '='.repeat(type.dashLen);
   const sections = groupReceiptLinesByStation(receipt.lines);
+  const slipWidth =
+    Platform.OS === 'web' && variant === 'preview'
+      ? ({ width: '58mm' as unknown as number, maxWidth: '100%' as const })
+      : { width: type.width, maxWidth: '100%' as const };
+
   return (
-    <View
-      className="w-[58mm] max-w-full self-center overflow-hidden bg-white px-1 py-2"
-      style={Platform.OS === 'web' ? { width: '58mm', maxWidth: '100%' } : { width: SLIP_WIDTH_DP, maxWidth: '100%' }}
-    >
-      <Text className="text-center text-[15px] font-bold uppercase leading-tight text-black">{receipt.businessName}</Text>
+    <View className="max-w-full self-center overflow-hidden bg-white px-1 py-2" style={slipWidth}>
+      <Text className={`text-center uppercase leading-tight text-black ${type.business}`}>
+        {receipt.businessName}
+      </Text>
       {receipt.address.trim() ? (
-        <Text className="mt-0.5 text-center text-[9px] leading-tight text-black" numberOfLines={1}>
+        <Text className={`mt-1 text-center leading-tight text-black ${type.address}`} numberOfLines={2}>
           {receipt.address.trim()}
         </Text>
       ) : null}
-      <Rule glyph={EQUALS} />
-      <HeaderRow left={copy.billLabel} right={formatBillStamp(receipt.closedAt)} leftAlign="left" rightAlign="right" />
+      <Rule glyph={equals} type={type} />
+      <HeaderRow
+        left={copy.billLabel}
+        right={formatBillStamp(receipt.closedAt)}
+        leftAlign="left"
+        rightAlign="right"
+        type={type}
+      />
       <HeaderRow
         left={receipt.heading}
         right={receipt.cashierName.trim()}
         leftAlign="left"
         rightAlign="right"
+        type={type}
       />
-      <Rule glyph={DASH} />
-      <ReceiptSection title={copy.bar} lines={sections.bar} pcs={copy.pcs} />
-      <ReceiptSection title={copy.kitchen} lines={sections.kitchen} pcs={copy.pcs} />
-      <Rule glyph={DASH} />
-      <AmountRow label={copy.subtotal} amount={receipt.subtotal} />
-      <AmountRow label={copy.roundOff} amount={receipt.roundOff} />
-      <Rule glyph={EQUALS} />
-      <AmountRow label={copy.total} amount={receipt.totalAmount} emphasis />
+      <Rule glyph={dash} type={type} />
+      <ReceiptSection title={copy.bar} lines={sections.bar} pcs={copy.pcs} type={type} />
+      <ReceiptSection title={copy.kitchen} lines={sections.kitchen} pcs={copy.pcs} type={type} />
+      <Rule glyph={dash} type={type} />
+      <AmountRow label={copy.subtotal} amount={receipt.subtotal} type={type} />
+      <AmountRow label={copy.roundOff} amount={receipt.roundOff} type={type} />
+      <Rule glyph={equals} type={type} />
+      <AmountRow label={copy.total} amount={receipt.totalAmount} emphasis type={type} />
       {receipt.isCredit ? (
         <>
-          <AmountRow label={receipt.paymentLabel} amount={receipt.paidAmount} />
-          <AmountRow label={copy.credit} amount={receipt.balanceAmount} />
+          <AmountRow label={receipt.paymentLabel} amount={receipt.paidAmount} type={type} />
+          <AmountRow label={copy.credit} amount={receipt.balanceAmount} type={type} />
         </>
       ) : (
-        <Meta>{receipt.paymentLabel}</Meta>
+        <Meta type={type}>{receipt.paymentLabel}</Meta>
       )}
-      <Rule glyph={DASH} />
-      <ScanPayBlock label={copy.scanPay} />
-      <Rule glyph={DASH} />
-      <Text className="text-center text-[11px] font-bold leading-tight text-black">{copy.thanks}</Text>
-      <Text className="mt-0.5 text-center text-[10px] leading-tight text-black">{copy.poweredBy}</Text>
+      <Rule glyph={dash} type={type} />
+      <Text className={`text-center leading-tight text-black ${type.thanks}`}>{copy.thanks}</Text>
+      <Text className={`mt-1 text-center leading-tight text-black ${type.powered}`}>{copy.poweredBy}</Text>
     </View>
   );
 }
 
-function ScanPayBlock({ label }: { label: string }) {
-  return (
-    <View className="my-1.5 items-center">
-      <Text className="mb-1.5 text-center text-[11px] font-bold uppercase tracking-wide text-black">{label}</Text>
-      <View className="border border-black bg-white p-1.5">
-        <Image
-          source={RECEIPT_QR_SOURCE}
-          accessibilityLabel={label}
-          resizeMode="contain"
-          style={{ width: RECEIPT_QR_SIZE, height: RECEIPT_QR_SIZE }}
-        />
-      </View>
-    </View>
-  );
-}
-
-function ReceiptSection({ title, lines, pcs }: { title: string; lines: ReceiptLine[]; pcs: string }) {
+function ReceiptSection({
+  title,
+  lines,
+  pcs,
+  type,
+}: {
+  title: string;
+  lines: ReceiptLine[];
+  pcs: string;
+  type: TypeScale;
+}) {
   if (lines.length === 0) {
     return null;
   }
   return (
     <>
-      <Text className="mt-1.5 text-center text-[8px] font-semibold uppercase tracking-widest leading-tight text-black">
+      <Text className={`mt-2 text-center uppercase tracking-widest leading-tight text-black ${type.section}`}>
         {`· ${title} ·`}
       </Text>
       {lines.map((line, index) => (
-        <View key={`${title}-${line.label}-${index}`} className="mt-1.5">
-          <Text className="font-bold text-[11px] leading-tight text-black">{line.label}</Text>
-          <View className="flex-row items-start justify-between gap-2">
-            <Text className="flex-1 text-[11px] leading-tight text-black">
+        <View key={`${title}-${line.label}-${index}`} className="mt-2">
+          <Text className={`font-bold leading-tight text-black ${type.line}`}>{line.label}</Text>
+          <View className="mt-0.5 flex-row items-start justify-between gap-2">
+            <Text className={`min-w-0 flex-1 leading-tight text-black ${type.line}`}>
               {formatReceiptMath(line.quantity, line.unitPrice, pcs)}
             </Text>
-            <Text className="shrink-0 text-[11px] leading-tight text-black">{formatReceiptAmount(line.lineTotal)}</Text>
+            <Text className={`shrink-0 leading-tight text-black ${type.line}`}>
+              {formatReceiptAmount(line.lineTotal)}
+            </Text>
           </View>
         </View>
       ))}
@@ -103,8 +123,8 @@ function ReceiptSection({ title, lines, pcs }: { title: string; lines: ReceiptLi
   );
 }
 
-function Meta({ children }: { children: string }) {
-  return <Text className="text-center text-[11px] leading-tight text-black">{children}</Text>;
+function Meta({ children, type }: { children: string; type: TypeScale }) {
+  return <Text className={`text-center leading-tight text-black ${type.amount}`}>{children}</Text>;
 }
 
 function HeaderRow({
@@ -112,27 +132,29 @@ function HeaderRow({
   right,
   leftAlign,
   rightAlign,
+  type,
 }: {
   left: string;
   right: string;
   leftAlign: 'left' | 'right';
   rightAlign: 'left' | 'right';
+  type: TypeScale;
 }) {
   return (
     <View className="flex-row items-start gap-1">
       <Text
-        className={`min-w-0 flex-1 text-[9px] font-bold leading-tight text-black ${
+        className={`min-w-0 flex-1 font-bold leading-tight text-black ${type.meta} ${
           leftAlign === 'right' ? 'text-right' : 'text-left'
         }`}
-        numberOfLines={1}
+        numberOfLines={2}
       >
         {left}
       </Text>
       <Text
-        className={`min-w-0 flex-1 text-[9px] leading-tight text-black ${
+        className={`min-w-0 flex-1 leading-tight text-black ${type.meta} ${
           rightAlign === 'right' ? 'text-right' : 'text-left'
         }`}
-        numberOfLines={1}
+        numberOfLines={2}
       >
         {right}
       </Text>
@@ -140,20 +162,30 @@ function HeaderRow({
   );
 }
 
-function Rule({ glyph }: { glyph: string }) {
+function Rule({ glyph, type }: { glyph: string; type: TypeScale }) {
   return (
-    <Text className="my-1 font-mono text-[11px] leading-tight text-black" numberOfLines={1}>
+    <Text className={`my-1.5 font-mono leading-tight text-black ${type.rule}`} numberOfLines={1}>
       {glyph}
     </Text>
   );
 }
 
-function AmountRow({ label, amount, emphasis = false }: { label: string; amount: number; emphasis?: boolean }) {
-  const type = emphasis ? 'text-[13px] font-bold leading-tight text-black' : 'text-[11px] leading-tight text-black';
+function AmountRow({
+  label,
+  amount,
+  emphasis = false,
+  type,
+}: {
+  label: string;
+  amount: number;
+  emphasis?: boolean;
+  type: TypeScale;
+}) {
+  const size = emphasis ? type.total : type.amount;
   return (
     <View className="flex-row items-start justify-between gap-2">
-      <Text className={`flex-1 uppercase ${type}`}>{label}</Text>
-      <Text className={`shrink-0 ${type}`}>{formatReceiptAmount(amount)}</Text>
+      <Text className={`min-w-0 flex-1 uppercase leading-tight text-black ${size}`}>{label}</Text>
+      <Text className={`shrink-0 leading-tight text-black ${size}`}>{formatReceiptAmount(amount)}</Text>
     </View>
   );
 }

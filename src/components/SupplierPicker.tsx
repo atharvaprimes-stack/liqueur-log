@@ -2,7 +2,9 @@ import { FlatList, Modal, Pressable, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { type Vendor } from '../domain/models/inventory';
+import { useMemo } from 'react';
+
+import { isDefaultSupplierName, type Vendor } from '../domain/models/inventory';
 import { useTheme } from '../theme/theme-context';
 import { ActionRow } from './FormActions';
 
@@ -17,6 +19,11 @@ type SupplierPickerProps = {
 export function SupplierPicker({ visible, vendors, selectedId, onClose, onSelect }: SupplierPickerProps) {
   const { t } = useTranslation();
   const { themeStyle } = useTheme();
+  const orderedVendors = useMemo(() => {
+    const preferred = vendors.filter((vendor) => isDefaultSupplierName(vendor.name));
+    const rest = vendors.filter((vendor) => !isDefaultSupplierName(vendor.name));
+    return [...preferred, ...rest];
+  }, [vendors]);
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -28,7 +35,7 @@ export function SupplierPicker({ visible, vendors, selectedId, onClose, onSelect
             </Text>
           </View>
           <FlatList
-            data={vendors}
+            data={orderedVendors}
             keyExtractor={(item) => item.id}
             keyboardShouldPersistTaps="handled"
             contentContainerClassName="px-4 pb-8"

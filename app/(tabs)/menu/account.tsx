@@ -1,9 +1,10 @@
 import { useState, type ReactNode } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, View } from 'react-native';
+import { Text, TextInput, View } from 'react-native';
 import { Redirect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
+import { FormScreen } from '../../../src/components/FormScreen';
 import { SaveRow } from '../../../src/components/FormActions';
 import { leaveScreen } from '../../../src/navigation/leave';
 import { useAuth } from '../../../src/context/AuthContext';
@@ -49,68 +50,66 @@ export default function AccountScreen() {
 
   return (
     <ScreenWrapper padded={false}>
-      <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView className="flex-1" contentContainerClassName="px-4 pb-8" keyboardShouldPersistTaps="handled">
-          <Text className="pt-4 text-title font-semibold text-ink">{t('account.title')}</Text>
-          <Text className="mt-1 text-sm text-muted">{t('account.body')}</Text>
+      <FormScreen contentContainerClassName="px-4 pb-8">
+        <Text className="pt-4 text-title font-semibold text-ink">{t('account.title')}</Text>
+        <Text className="mt-1 text-sm text-muted">{t('account.body')}</Text>
 
-          <Field label={t('account.name')}>
-            <TextInput
-              value={name}
-              onChangeText={setName}
-              placeholder={t('account.namePlaceholder')}
-              placeholderTextColor={palette.muted}
-              className={inputClass}
-            />
-          </Field>
-          <Field label={t('account.mobile')}>
-            <TextInput value={currentUser.mobileNumber} editable={false} className={`${inputClass} text-muted`} />
-          </Field>
-          <Field label={t('account.currentMpin')}>
-            <TextInput
-              value={currentMpin}
-              onChangeText={(value) => setCurrentMpin(value.replace(/\D/g, '').slice(0, 4))}
-              keyboardType="number-pad"
-              secureTextEntry
-              placeholder={t('account.mpinPlaceholder')}
-              placeholderTextColor={palette.muted}
-              className={inputClass}
-            />
-          </Field>
-          <Field label={t('account.newMpin')}>
-            <TextInput
-              value={newMpin}
-              onChangeText={(value) => setNewMpin(value.replace(/\D/g, '').slice(0, 4))}
-              keyboardType="number-pad"
-              secureTextEntry
-              placeholder={t('account.newMpinPlaceholder')}
-              placeholderTextColor={palette.muted}
-              className={inputClass}
-            />
-          </Field>
-          <Field label={t('account.confirmMpin')}>
-            <TextInput
-              value={confirmMpin}
-              onChangeText={(value) => setConfirmMpin(value.replace(/\D/g, '').slice(0, 4))}
-              keyboardType="number-pad"
-              secureTextEntry
-              placeholder={t('account.mpinPlaceholder')}
-              placeholderTextColor={palette.muted}
-              className={inputClass}
-            />
-          </Field>
-
-          {errorCode ? <Text className="mt-4 text-sm text-danger">{t(`account.errors.${errorCode}`)}</Text> : null}
-          <SaveRow
-            parent="/menu"
-            saveLabel={t('account.save')}
-            saving={saving}
-            onSave={() => {
-              void onSave();
-            }}
+        <Field label={t('account.name')}>
+          <TextInput
+            value={name}
+            onChangeText={setName}
+            placeholder={t('account.namePlaceholder')}
+            placeholderTextColor={palette.muted}
+            className={inputClass}
           />
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </Field>
+        <Field label={t('account.mobile')}>
+          <TextInput value={currentUser.mobileNumber} editable={false} className={`${inputClass} text-muted`} />
+        </Field>
+        <Field label={t('account.currentMpin')}>
+          <TextInput
+            value={currentMpin}
+            onChangeText={(value) => setCurrentMpin(value.replace(/\D/g, '').slice(0, 4))}
+            keyboardType="number-pad"
+            secureTextEntry
+            placeholder={t('account.mpinPlaceholder')}
+            placeholderTextColor={palette.muted}
+            className={inputClass}
+          />
+        </Field>
+        <Field label={t('account.newMpin')}>
+          <TextInput
+            value={newMpin}
+            onChangeText={(value) => setNewMpin(value.replace(/\D/g, '').slice(0, 4))}
+            keyboardType="number-pad"
+            secureTextEntry
+            placeholder={t('account.newMpinPlaceholder')}
+            placeholderTextColor={palette.muted}
+            className={inputClass}
+          />
+        </Field>
+        <Field label={t('account.confirmMpin')}>
+          <TextInput
+            value={confirmMpin}
+            onChangeText={(value) => setConfirmMpin(value.replace(/\D/g, '').slice(0, 4))}
+            keyboardType="number-pad"
+            secureTextEntry
+            placeholder={t('account.mpinPlaceholder')}
+            placeholderTextColor={palette.muted}
+            className={inputClass}
+          />
+        </Field>
+
+        {errorCode ? <Text className="mt-4 text-sm text-danger">{t(`account.errors.${errorCode}`)}</Text> : null}
+        <SaveRow
+          parent="/menu"
+          saveLabel={t('account.save')}
+          saving={saving}
+          onSave={() => {
+            void onSave();
+          }}
+        />
+      </FormScreen>
     </ScreenWrapper>
   );
 }

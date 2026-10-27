@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   View,
@@ -15,12 +12,14 @@ import { useTranslation } from 'react-i18next';
 
 import { ItemPickerModal } from './ItemPickerModal';
 import { SaveRow } from './FormActions';
+import { FormScreen } from './FormScreen';
 import { leaveScreen } from '../navigation/leave';
 import { ScreenWrapper } from './ScreenWrapper';
 import { SupplierPicker } from './SupplierPicker';
 import { useAuth } from '../context/AuthContext';
 import { inventoryErrorCode } from '../domain/errors';
 import {
+  isDefaultSupplierName,
   PAYMENT_TYPES,
   summarizeDraft,
   type DraftLine,
@@ -69,10 +68,12 @@ export function StockEntryScreen() {
   const { t } = useTranslation();
   const { palette } = useTheme();
   const { currentUser, isReady } = useAuth();
-  const { items, isLoading, errorCode, savePurchase } = useInventory();
+  const { items, isLoading, errorCode, savePurchase, suggestNextInvoice } = useInventory();
   const { vendors, isLoading: vendorsLoading } = useVendors();
   const params = useLocalSearchParams<{ itemIds?: string | string[]; itemId?: string | string[] }>();
   const seededKey = useRef<string | null>(null);
+  /** Tracks which supplier the current auto-suggested invoice belongs to. */
+  const invoiceForSupplierKey = useRef<string | null>(null);
   const [vendorId, setVendorId] = useState<string | null>(null);
   const [vendorPickerOpen, setVendorPickerOpen] = useState(false);
   const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -111,10 +112,41 @@ export function StockEntryScreen() {
       setVendorId(null);
       return;
     }
-    if (!vendorId && vendors.length === 1) {
-      setVendorId(vendors[0].id);
+    // Prefer catch-all "NA" on first load; do not auto-pick an arbitrary single vendor.
+    if (!vendorId && vendors.length > 0) {
+      const defaultVendor = vendors.find((entry) => isDefaultSupplierName(entry.name));
+      if (defaultVendor) {
+        setVendorId(defaultVendor.id);
+      }
     }
   }, [vendorId, vendors]);
+
+  useEffect(() => {
+    if (!vendor) {
+      invoiceForSupplierKey.current = null;
+      return;
+    }
+    const supplierKey = vendor.name.trim().toLowerCase();
+    if (invoiceForSupplierKey.current === supplierKey) {
+      return;
+    }
+    invoiceForSupplierKey.current = supplierKey;
+    let active = true;
+    void suggestNextInvoice(vendor.name)
+      .then((next) => {
+        if (active) {
+          setInvoiceNumber(next);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setInvoiceNumber('1');
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [suggestNextInvoice, vendor]);
 
   useEffect(() => {
     if (seedItemIds.length === 0) {
@@ -221,8 +253,70 @@ export function StockEntryScreen() {
 
   return (
     <ScreenWrapper padded={false}>
-      <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView className="flex-1" contentContainerClassName="gap-4 px-4 pb-8 pt-3" keyboardShouldPersistTaps="handled">
+      <FormScreen
+        contentContainerClassName="gap-4 px-4 pb-8 pt-3"
+        bottomOffset={160}
+        footer={
+          <View className="border-t border-line bg-surface px-4 py-3">
+            {saved ? (
+              <View>
+                <Text className="text-base font-semibold text-ink">{t('stock.purchase.savedTitle')}</Text>
+                <Text className="mt-1 text-sm text-muted">
+                  {t('stock.purchase.savedBody', { invoice: invoiceNumber.trim() })}
+                </Text>
+                {paymentType === 'Credit' || paymentType === 'Partial' ? (
+                  <Text className="mt-1 text-sm text-muted">{t('stock.purchase.creditNote')}</Text>
+                ) : null}
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => leaveScreen('/stock')}
+                  className="mt-3 h-12 items-center justify-center rounded-lg bg-accent"
+                >
+                  <Text className="text-base font-semibold text-accent-ink">{t('stock.purchase.ok')}</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View>
+                <View className="mb-2 flex-row items-end justify-between gap-3">
+                  <Text className="text-sm font-semibold text-muted">{t('stock.purchase.total')}</Text>
+                  <Text className="text-title font-bold text-ink">{formatInrFromPaise(summary.totalPaise)}</Text>
+                </View>
+                {paymentType === 'Cash' ? (
+                  <Text className="mb-1 text-sm font-semibold text-success">
+                    {t('stock.purchase.paid')}: {formatInrFromPaise(summary.totalPaise)}
+                  </Text>
+                ) : null}
+                {paymentType === 'Credit' ? (
+                  <Text className="mb-1 text-sm text-muted">
+                    {t('stock.purchase.due')}: {formatInrFromPaise(summary.totalPaise)}
+                  </Text>
+                ) : null}
+                {paymentType === 'Partial' && paidPaise !== null ? (
+                  <View className="mb-1 gap-0.5">
+                    <Text className="text-sm font-semibold text-success">
+                      {t('stock.purchase.paid')}: {formatInrFromPaise(paidPaise)}
+                    </Text>
+                    <Text className="text-sm text-muted">
+                      {t('stock.purchase.due')}: {formatInrFromPaise(creditPaise)}
+                    </Text>
+                  </View>
+                ) : null}
+                {summary.issue ? <Text className="mb-2 text-sm text-danger">{t(`stock.errors.${summary.issue}`)}</Text> : null}
+                {formError ? <Text className="mb-2 text-sm text-danger">{t(`stock.errors.${formError}`)}</Text> : null}
+                <SaveRow
+                  parent="/stock"
+                  className="mt-1"
+                  saveLabel={t('stock.purchase.save')}
+                  saving={saving}
+                  onSave={() => {
+                    void onSave();
+                  }}
+                />
+              </View>
+            )}
+          </View>
+        }
+      >
           <View>
             <Text className="text-display font-semibold text-ink">{t('stock.purchase.title')}</Text>
             <Text className="mt-1 text-body text-muted">{t('stock.purchase.subtitleBlank')}</Text>
@@ -261,7 +355,10 @@ export function StockEntryScreen() {
                 <Text className="mb-1.5 text-xs font-semibold text-muted">{t('stock.purchase.invoice')}</Text>
                 <TextInput
                   value={invoiceNumber}
-                  onChangeText={setInvoiceNumber}
+                  onChangeText={(value) => {
+                    setInvoiceNumber(value);
+                    setFormError(null);
+                  }}
                   placeholder={t('stock.purchase.invoicePlaceholder')}
                   placeholderTextColor={palette.muted}
                   autoCapitalize="characters"
@@ -386,67 +483,7 @@ export function StockEntryScreen() {
               </View>
             )}
           </View>
-        </ScrollView>
-
-        <View className="border-t border-line bg-surface px-4 py-3">
-          {saved ? (
-            <View>
-              <Text className="text-base font-semibold text-ink">{t('stock.purchase.savedTitle')}</Text>
-              <Text className="mt-1 text-sm text-muted">
-                {t('stock.purchase.savedBody', { invoice: invoiceNumber.trim() })}
-              </Text>
-              {paymentType === 'Credit' || paymentType === 'Partial' ? (
-                <Text className="mt-1 text-sm text-muted">{t('stock.purchase.creditNote')}</Text>
-              ) : null}
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => leaveScreen('/stock')}
-                className="mt-3 h-12 items-center justify-center rounded-lg bg-accent"
-              >
-                <Text className="text-base font-semibold text-accent-ink">{t('stock.purchase.ok')}</Text>
-              </Pressable>
-            </View>
-          ) : (
-            <View>
-              <View className="mb-2 flex-row items-end justify-between gap-3">
-                <Text className="text-sm font-semibold text-muted">{t('stock.purchase.total')}</Text>
-                <Text className="text-title font-bold text-ink">{formatInrFromPaise(summary.totalPaise)}</Text>
-              </View>
-              {paymentType === 'Cash' ? (
-                <Text className="mb-1 text-sm font-semibold text-success">
-                  {t('stock.purchase.paid')}: {formatInrFromPaise(summary.totalPaise)}
-                </Text>
-              ) : null}
-              {paymentType === 'Credit' ? (
-                <Text className="mb-1 text-sm text-muted">
-                  {t('stock.purchase.due')}: {formatInrFromPaise(summary.totalPaise)}
-                </Text>
-              ) : null}
-              {paymentType === 'Partial' && paidPaise !== null ? (
-                <View className="mb-1 gap-0.5">
-                  <Text className="text-sm font-semibold text-success">
-                    {t('stock.purchase.paid')}: {formatInrFromPaise(paidPaise)}
-                  </Text>
-                  <Text className="text-sm text-muted">
-                    {t('stock.purchase.due')}: {formatInrFromPaise(creditPaise)}
-                  </Text>
-                </View>
-              ) : null}
-              {summary.issue ? <Text className="mb-2 text-sm text-danger">{t(`stock.errors.${summary.issue}`)}</Text> : null}
-              {formError ? <Text className="mb-2 text-sm text-danger">{t(`stock.errors.${formError}`)}</Text> : null}
-              <SaveRow
-                parent="/stock"
-                className="mt-1"
-                saveLabel={t('stock.purchase.save')}
-                saving={saving}
-                onSave={() => {
-                  void onSave();
-                }}
-              />
-            </View>
-          )}
-        </View>
-      </KeyboardAvoidingView>
+      </FormScreen>
 
       <SupplierPicker
         visible={vendorPickerOpen}
@@ -454,6 +491,10 @@ export function StockEntryScreen() {
         selectedId={vendorId}
         onClose={() => setVendorPickerOpen(false)}
         onSelect={(nextId) => {
+          // Reset invoice tracking so changing supplier reloads that supplier's next bill number.
+          if (nextId !== vendorId) {
+            invoiceForSupplierKey.current = null;
+          }
           setVendorId(nextId);
           setVendorPickerOpen(false);
           setFormError(null);
@@ -474,6 +515,7 @@ export function StockEntryScreen() {
 const COMPACT_INPUT_STYLE = {
   paddingVertical: 0,
   textAlignVertical: 'center' as const,
+  includeFontPadding: false,
 };
 
 function ItemTableRow({
@@ -509,7 +551,6 @@ function ItemTableRow({
         placeholder="0"
         placeholderTextColor={palette.muted}
         accessibilityLabel={t('stock.purchase.quantity')}
-        includeFontPadding={false}
         className="h-11 w-14 rounded-lg border border-line bg-canvas px-1 text-center text-sm text-ink"
         style={COMPACT_INPUT_STYLE}
       />
@@ -520,7 +561,6 @@ function ItemTableRow({
         placeholder="0"
         placeholderTextColor={palette.muted}
         accessibilityLabel={t('stock.purchase.cost')}
-        includeFontPadding={false}
         className="h-11 w-[72px] rounded-lg border border-line bg-canvas px-1 text-center text-sm text-ink"
         style={COMPACT_INPUT_STYLE}
       />

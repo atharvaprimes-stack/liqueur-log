@@ -1,0 +1,33 @@
+diff --git a/node_modules/react-native-thermal-printer-driver/android/src/main/java/com/thermalprinterdriver/discovery/DeviceScanner.kt b/node_modules/react-native-thermal-printer-driver/android/src/main/java/com/thermalprinterdriver/discovery/DeviceScanner.kt
+index 13cfcbf..454ee1c 100644
+--- a/node_modules/react-native-thermal-printer-driver/android/src/main/java/com/thermalprinterdriver/discovery/DeviceScanner.kt
++++ b/node_modules/react-native-thermal-printer-driver/android/src/main/java/com/thermalprinterdriver/discovery/DeviceScanner.kt
+@@ -99,13 +99,26 @@ class DeviceScanner(private val reactContext: ReactApplicationContext) {
+                     adapter.startDiscovery()
+                 } catch (e: SecurityException) {
+                     unregisterReceiver()
+-                    promise.reject("BT_PERMISSION", "Missing BLUETOOTH_SCAN permission: ${e.message}")
++                    // Keep bonded printers — discovery needs SCAN; paired list only needs CONNECT.
++                    if (pairedDevices.isNotEmpty()) {
++                        Log.w(TAG, "[Native:Android] DeviceScanner: discovery permission missing; returning ${pairedDevices.size} paired")
++                        promise.resolve(buildResult())
++                    } else {
++                        promise.reject("BT_PERMISSION", "Missing BLUETOOTH_SCAN permission: ${e.message}")
++                    }
+                     return@withContext
+                 }
+ 
+                 if (!started) {
+                     unregisterReceiver()
+-                    promise.reject("SCAN_FAILED", "startDiscovery returned false — check permissions and location")
++                    // OEM/location quirks often make startDiscovery() return false in <1s.
++                    // Still return already-paired devices (e.g. PSF588 from Android Settings).
++                    if (pairedDevices.isNotEmpty()) {
++                        Log.w(TAG, "[Native:Android] DeviceScanner: startDiscovery false; returning ${pairedDevices.size} paired")
++                        promise.resolve(buildResult())
++                    } else {
++                        promise.reject("SCAN_FAILED", "startDiscovery returned false — check permissions and location")
++                    }
+                     return@withContext
+                 }
+ 

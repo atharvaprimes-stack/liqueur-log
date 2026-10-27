@@ -10,9 +10,6 @@ import {
 /** 58mm at 72 points per inch. */
 export const RECEIPT_PAGE_WIDTH = 164;
 
-/** Keep in sync with `RECEIPT_QR_SIZE` in printing/receiptQr. */
-const RECEIPT_QR_BLOCK = 108;
-
 const DASH = '-'.repeat(48);
 const EQUALS = '='.repeat(48);
 
@@ -42,11 +39,7 @@ export function receiptFileName(sequence: string): string {
   return `${sequence.replace(/[^\d-]/g, '') || 'bill'}.pdf`;
 }
 
-export function buildReceiptDocument(
-  receipt: ReceiptPayload,
-  copy: ReceiptCopy,
-  qrDataUri: string,
-): ReceiptDocument {
+export function buildReceiptDocument(receipt: ReceiptPayload, copy: ReceiptCopy): ReceiptDocument {
   const height = pageHeight(receipt, copy);
   const heightMm = ((height / 72) * 25.4).toFixed(2);
   const fileName = receiptFileName(receipt.sequence);
@@ -173,29 +166,6 @@ export function buildReceiptDocument(
       font-weight: 700;
       line-height: 1.25;
     }
-    .scan {
-      margin: 6px 0;
-      text-align: center;
-    }
-    .scan-label {
-      margin-bottom: 6px;
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-    }
-    .scan-frame {
-      display: inline-block;
-      padding: 4px;
-      border: 1px solid #000000;
-      background: #ffffff;
-      line-height: 0;
-    }
-    .scan-frame img {
-      width: ${RECEIPT_QR_BLOCK}px;
-      height: ${RECEIPT_QR_BLOCK}px;
-      object-fit: contain;
-    }
     .thanks {
       font-weight: 700;
     }
@@ -225,11 +195,6 @@ export function buildReceiptDocument(
     <div class="rule">${EQUALS}</div>
     ${amountRow(copy.total, receipt.totalAmount, true)}
     ${payment}
-    <div class="rule">${DASH}</div>
-    <div class="scan">
-      <div class="scan-label">${escapeHtml(copy.scanPay)}</div>
-      <div class="scan-frame"><img src="${qrDataUri}" alt="${escapeHtml(copy.scanPay)}" /></div>
-    </div>
     <div class="rule">${DASH}</div>
     <div class="thanks">${escapeHtml(copy.thanks)}</div>
     <div class="powered">${escapeHtml(copy.poweredBy)}</div>
@@ -286,7 +251,7 @@ function pageHeight(receipt: ReceiptPayload, copy: ReceiptCopy): number {
   }
   height += 12 + 14 * 3 + 12 + 18;
   height += receipt.isCredit ? 28 : 14;
-  height += 12 + 18 + RECEIPT_QR_BLOCK + 16;
+  height += 12;
   height += 12 + wrappedLines(copy.thanks, 22) * 16 + wrappedLines(copy.poweredBy, 24) * 14 + 24;
   return Math.max(height, 240);
 }

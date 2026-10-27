@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, Text, TextInput, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import { FormDialog } from './FormScreen';
 import { useTheme } from '../theme/theme-context';
 
 type StaffFormValues = {
@@ -49,8 +50,8 @@ export function StaffFormModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={themeStyle} className="flex-1 items-center justify-center bg-black/70 px-4">
-        <View className="w-full max-w-md rounded-3xl border border-line bg-surface p-5">
+      <View style={themeStyle} className="flex-1 bg-black/70 px-4">
+        <FormDialog>
           <Text className="text-title font-semibold text-ink">{title}</Text>
           <Text className="mt-1 text-sm text-muted">{t('staff.scope')}</Text>
 
@@ -111,7 +112,7 @@ export function StaffFormModal({
               )}
             </Pressable>
           </View>
-        </View>
+        </FormDialog>
       </View>
     </Modal>
   );

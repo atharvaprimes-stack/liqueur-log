@@ -1,11 +1,13 @@
 import '../global.css';
 import { StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider, SessionTimeoutProvider } from '../src/context/AuthContext';
 import { TableRequestsProvider } from '../src/context/TableRequestsContext';
 import { ThemeProvider } from '../src/context/ThemeContext';
+import { ReceiptCaptureHost } from '../src/printing/ReceiptCaptureHost';
 import '../src/i18n';
 
 const styleSheet = StyleSheet as typeof StyleSheet & {
@@ -16,15 +18,18 @@ styleSheet.setFlag?.('darkMode', 'class');
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
-      <ThemeProvider>
-        <AuthProvider>
-          <TableRequestsProvider>
-            <SessionTimeoutProvider>
-              <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: 'transparent' } }} />
-            </SessionTimeoutProvider>
-          </TableRequestsProvider>
-        </AuthProvider>
-      </ThemeProvider>
+      <KeyboardProvider preload={false}>
+        <ThemeProvider>
+          <AuthProvider>
+            <TableRequestsProvider>
+              <SessionTimeoutProvider>
+                <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: 'transparent' } }} />
+                <ReceiptCaptureHost />
+              </SessionTimeoutProvider>
+            </TableRequestsProvider>
+          </AuthProvider>
+        </ThemeProvider>
+      </KeyboardProvider>
     </SafeAreaProvider>
   );
 }

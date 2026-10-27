@@ -65,7 +65,29 @@ module.exports = {
         defaultChannel: 'table-requests',
       },
     ],
+    [
+      'react-native-thermal-printer-driver',
+      {
+        bluetoothAlwaysPermission:
+          'Allow Liqueur Log to connect to your thermal receipt printer over Bluetooth.',
+      },
+    ],
     './plugins/withAndroidShareQueries',
+    [
+      'expo-build-properties',
+      {
+        android: {
+          // Real phones only — x86/x86_64 are for emulators and roughly double APK size.
+          buildArchs: ['armeabi-v7a', 'arm64-v8a'],
+          enableMinifyInReleaseBuilds: true,
+          enableShrinkResourcesInReleaseBuilds: true,
+          enableBundleCompression: true,
+          // Compress .so files inside the APK (smaller file to share/install).
+          useLegacyPackaging: true,
+          extraProguardRules: '-keep class com.thermalprinterdriver.** { *; }',
+        },
+      },
+    ],
   ],
   experiments: {
     typedRoutes: false,
@@ -76,6 +98,11 @@ module.exports = {
       'android.permission.RECORD_AUDIO',
       'android.permission.POST_NOTIFICATIONS',
       'android.permission.VIBRATE',
+      'android.permission.BLUETOOTH',
+      'android.permission.BLUETOOTH_ADMIN',
+      'android.permission.BLUETOOTH_CONNECT',
+      'android.permission.BLUETOOTH_SCAN',
+      'android.permission.ACCESS_FINE_LOCATION',
     ],
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',

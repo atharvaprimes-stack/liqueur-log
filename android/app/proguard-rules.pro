@@ -11,4 +11,7 @@
 -keep class com.swmansion.reanimated.** { *; }
 -keep class com.facebook.react.turbomodule.** { *; }
 
+# Thermal printer TurboModule (release minify)
+-keep class com.thermalprinterdriver.** { *; }
+
 # Add any project specific keep options here:

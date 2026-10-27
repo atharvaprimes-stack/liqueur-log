@@ -59,6 +59,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
   const [requestNotice, setRequestNotice] = useState(false);
   const [focusLineId, setFocusLineId] = useState<string | null>(null);
   const [requestBusyId, setRequestBusyId] = useState<string | null>(null);
+  const [addingItemId, setAddingItemId] = useState<string | null>(null);
   const order = cart.order;
   const editable = order?.status === 'OPEN';
   const searching = query.trim().length > 0;
@@ -99,18 +100,24 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
   const onPickCatalogItem = useCallback(
     (item: StockItem) => {
       setFormError(null);
-      void cart.addItem(item.id, 1).then((next) => {
-        if (!next) {
-          return;
-        }
-        if (searching) {
-          setQuery('');
-        }
-        const newest = [...next.lines].reverse().find((line) => line.itemId === item.id);
-        if (newest) {
-          requestAnimationFrame(() => pulseLine(newest.id));
-        }
-      });
+      setAddingItemId(item.id);
+      void cart
+        .addItem(item.id, 1)
+        .then((next) => {
+          if (!next) {
+            return;
+          }
+          if (searching) {
+            setQuery('');
+          }
+          const newest = [...next.lines].reverse().find((line) => line.itemId === item.id);
+          if (newest) {
+            requestAnimationFrame(() => pulseLine(newest.id));
+          }
+        })
+        .finally(() => {
+          setAddingItemId((current) => (current === item.id ? null : current));
+        });
     },
     [cart, pulseLine, searching],
   );
@@ -445,6 +452,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                               item={item}
                               language={i18n.language}
                               busy={busy}
+                              adding={addingItemId === item.id}
                               showDivider={index < searchMatches.length - 1}
                               onAdd={() => onPickCatalogItem(item)}
                             />
@@ -606,7 +614,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
             onSubmit={(payment) => {
               void onCollect(payment);
             }}
-            onPrint={(preview) => {
+            onPrint={(preview, payment) => {
               void (async () => {
                 setShareNotice(null);
                 // Native PrintManager sits under RN Modal; Android resolves as soon as
@@ -617,7 +625,10 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                 if (!ok) {
                   setPaymentOpen(true);
                   setShareNotice('printFailed');
+                  return;
                 }
+                // Successful bill print settles the order (counter + table).
+                await onCollect(payment);
               })();
             }}
           />
@@ -877,12 +888,14 @@ function SearchMatchRow({
   item,
   language,
   busy,
+  adding,
   showDivider,
   onAdd,
 }: {
   item: StockItem;
   language: string;
   busy: boolean;
+  adding: boolean;
   showDivider: boolean;
   onAdd: () => void;
 }) {
@@ -907,7 +920,9 @@ function SearchMatchRow({
         accessibilityLabel={t('billing.add')}
         disabled={busy || out}
         onPress={onAdd}
-        className="h-9 min-w-[64px] items-center justify-center rounded-md bg-accent px-3 disabled:opacity-50"
+        className={`h-9 min-w-[64px] items-center justify-center rounded-md bg-accent px-3 ${
+          out || adding ? 'opacity-50' : ''
+        }`}
       >
         <Text className="text-sm font-semibold text-accent-ink">{t('billing.add')}</Text>
       </Pressable>

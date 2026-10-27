@@ -29,17 +29,18 @@ const SHEETS = {
   item_types: {
     headers: ['name', 'sort_order'],
     rows: [
-      { name: 'Whisky', sort_order: 0 },
-      { name: 'Beer', sort_order: 1 },
-      { name: 'Snacks', sort_order: 2 },
+      { name: 'NA', sort_order: 0 },
+      { name: 'Whisky', sort_order: 1 },
+      { name: 'Beer', sort_order: 2 },
+      { name: 'Snacks', sort_order: 3 },
     ],
   },
   item_strengths: {
     headers: ['name', 'sort_order'],
     rows: [
-      { name: 'Mild', sort_order: 0 },
-      { name: 'Strong', sort_order: 1 },
-      { name: 'NA', sort_order: 2 },
+      { name: 'NA', sort_order: 0 },
+      { name: 'Mild', sort_order: 1 },
+      { name: 'Strong', sort_order: 2 },
     ],
   },
   vendors: {

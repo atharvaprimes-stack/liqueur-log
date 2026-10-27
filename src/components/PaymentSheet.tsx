@@ -38,7 +38,10 @@ type PaymentSheetProps = {
   draftPreview: (method: PaymentMethod) => BillPreview | null;
   onClose: () => void;
   onSubmit: (payment: { method: PaymentMethod; paidAmount: number }) => void;
-  onPrint: (preview: BillPreview) => void;
+  onPrint: (
+    preview: BillPreview,
+    payment: { method: PaymentMethod; paidAmount: number },
+  ) => void;
 };
 
 export function PaymentSheet({
@@ -148,7 +151,7 @@ export function PaymentSheet({
                   iconColor={palette.ink}
                   onPress={() => {
                     if (preview) {
-                      onPrint(preview);
+                      onPrint(preview, { method, paidAmount: order.totalAmount });
                     }
                   }}
                 />

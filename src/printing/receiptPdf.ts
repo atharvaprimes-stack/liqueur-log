@@ -1,5 +1,5 @@
 import 'regenerator-runtime/runtime';
-import { PDFDocument, rgb, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib';
+import { PDFDocument, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 
 import {
   formatBillStamp,
@@ -11,12 +11,9 @@ import {
 } from '../domain/billing';
 import { RECEIPT_PAGE_WIDTH, receiptFileName, type ReceiptCopy } from '../domain/receiptDocument';
 import { embedDocumentFont } from './pdfFont';
-import { embedReceiptQr, RECEIPT_QR_SIZE } from './receiptQr';
 
 const MARGIN = 10;
 const BLACK = rgb(0, 0, 0);
-const QR_PAD = 4;
-const QR_BORDER = 1;
 
 export type ReceiptPdf = {
   bytes: Uint8Array;
@@ -26,26 +23,19 @@ export type ReceiptPdf = {
 export async function buildReceiptPdf(receipt: ReceiptPayload, copy: ReceiptCopy): Promise<ReceiptPdf> {
   const pdf = await PDFDocument.create();
   const font = await embedDocumentFont(pdf);
-  const qr = await embedReceiptQr(pdf);
   const width = RECEIPT_PAGE_WIDTH - MARGIN * 2;
-  const contentHeight = measure(font, receipt, copy, width, qr);
+  const contentHeight = measure(font, receipt, copy, width);
   const page = pdf.addPage([RECEIPT_PAGE_WIDTH, contentHeight]);
-  paint(page, font, receipt, copy, width, page.getHeight() - MARGIN, qr);
+  paint(page, font, receipt, copy, width, page.getHeight() - MARGIN);
   return {
     bytes: await pdf.save(),
     fileName: receiptFileName(receipt.sequence),
   };
 }
 
-function measure(
-  font: PDFFont,
-  receipt: ReceiptPayload,
-  copy: ReceiptCopy,
-  width: number,
-  qr: PDFImage,
-): number {
+function measure(font: PDFFont, receipt: ReceiptPayload, copy: ReceiptCopy, width: number): number {
   const cursor = { y: 0 };
-  paint(null, font, receipt, copy, width, 0, qr, cursor);
+  paint(null, font, receipt, copy, width, 0, cursor);
   return Math.max(MARGIN + -cursor.y + MARGIN, 160);
 }
 
@@ -56,7 +46,6 @@ function paint(
   copy: ReceiptCopy,
   width: number,
   startY: number,
-  qr: PDFImage,
   cursor: { y: number } = { y: startY },
 ): void {
   center(page, font, receipt.businessName.toLocaleUpperCase(), 13, width, cursor, 1);
@@ -81,8 +70,6 @@ function paint(
   } else {
     center(page, font, receipt.paymentLabel, 9, width, cursor, 1);
   }
-  rule(page, font, '-', width, cursor);
-  scanPay(page, font, copy.scanPay, width, cursor, qr);
   rule(page, font, '-', width, cursor);
   center(page, font, copy.thanks, 10, width, cursor, 1);
   center(page, font, copy.poweredBy, 8, width, cursor, 0);
@@ -114,38 +101,6 @@ function paintSection(
       3,
     );
   }
-}
-
-function scanPay(
-  page: PDFPage | null,
-  font: PDFFont,
-  label: string,
-  width: number,
-  cursor: { y: number },
-  qr: PDFImage,
-): void {
-  cursor.y -= 4;
-  center(page, font, label.toLocaleUpperCase(), 10, width, cursor, 4);
-  const box = RECEIPT_QR_SIZE + (QR_PAD + QR_BORDER) * 2;
-  const left = MARGIN + (width - box) / 2;
-  if (page) {
-    page.drawRectangle({
-      x: left,
-      y: cursor.y - box,
-      width: box,
-      height: box,
-      borderColor: BLACK,
-      borderWidth: QR_BORDER,
-      color: rgb(1, 1, 1),
-    });
-    page.drawImage(qr, {
-      x: left + QR_BORDER + QR_PAD,
-      y: cursor.y - box + QR_BORDER + QR_PAD,
-      width: RECEIPT_QR_SIZE,
-      height: RECEIPT_QR_SIZE,
-    });
-  }
-  cursor.y -= box + 4;
 }
 
 function headerRow(
