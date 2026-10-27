@@ -11,13 +11,27 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { useTranslation } from 'react-i18next';
 
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
+import { useAuth } from '../../../src/context/AuthContext';
 import { leaveScreen } from '../../../src/navigation/leave';
+import {
+  getPrintFontSize,
+  PRINT_FONT_SIZES,
+  savePrintFontSize,
+  type PrintFontSize,
+} from '../../../src/printing/printFontSize';
+import {
+  getPrintPaperWidth,
+  PRINT_PAPER_WIDTHS,
+  savePrintPaperWidth,
+  type PrintPaperWidth,
+} from '../../../src/printing/printPaperWidth';
 import {
   clearRegisteredPrinter,
   getRegisteredPrinter,
   saveRegisteredPrinter,
   type RegisteredPrinter,
 } from '../../../src/printing/printerStore';
+import { thermalErrorCode } from '../../../src/printing/thermalErrors';
 import {
   isThermalPrinterSupported,
   scanThermalPrinters,
@@ -27,20 +41,48 @@ import {
 } from '../../../src/printing/thermalPrint';
 import { useTheme } from '../../../src/theme/theme-context';
 
-type Notice = 'saved' | 'tested' | 'cleared' | 'scanFailed' | 'testFailed' | 'unsupported' | null;
+type Notice =
+  | 'saved'
+  | 'tested'
+  | 'cleared'
+  | 'scanFailed'
+  | 'permissionDenied'
+  | 'bluetoothOff'
+  | 'testFailed'
+  | 'unsupported'
+  | 'fontSaved'
+  | 'paperSaved'
+  | null;
+
+const FONT_LABELS: Record<PrintFontSize, 'printer.fontSmall' | 'printer.fontMedium' | 'printer.fontLarge'> = {
+  small: 'printer.fontSmall',
+  medium: 'printer.fontMedium',
+  large: 'printer.fontLarge',
+};
+
+const PAPER_LABELS: Record<PrintPaperWidth, 'printer.paper58' | 'printer.paper80'> = {
+  58: 'printer.paper58',
+  80: 'printer.paper80',
+};
 
 export default function PrinterScreen() {
   const { t } = useTranslation();
+  const { currentUser } = useAuth();
   const { palette } = useTheme();
+  const isAdmin = currentUser?.role === 'ADMIN';
   const supported = isThermalPrinterSupported();
   const [registered, setRegistered] = useState<RegisteredPrinter | null>(null);
   const [devices, setDevices] = useState<ThermalDevice[]>([]);
   const [scanning, setScanning] = useState(false);
   const [busyAddress, setBusyAddress] = useState<string | null>(null);
+  const [printFontSize, setPrintFontSize] = useState<PrintFontSize>('small');
+  const [printPaperWidth, setPrintPaperWidth] = useState<PrintPaperWidth>(58);
   const [notice, setNotice] = useState<Notice>(supported ? null : 'unsupported');
 
   useEffect(() => {
     void getRegisteredPrinter().then(setRegistered);
+    void getPrintFontSize().then(setPrintFontSize);
+    void getPrintPaperWidth().then(setPrintPaperWidth);
     return () => {
       void stopThermalPrinterScan();
     };
@@ -59,8 +101,17 @@ export default function PrinterScreen() {
       if (merged.length === 0) {
         setNotice('scanFailed');
       }
-    } catch {
-      setNotice('scanFailed');
+    } catch (error) {
+      const code = thermalErrorCode(error);
+      if (code === 'permission') {
+        setNotice('permissionDenied');
+      } else if (code === 'bluetooth-off') {
+        setNotice('bluetoothOff');
+      } else if (code === 'unsupported') {
+        setNotice('unsupported');
+      } else {
+        setNotice('scanFailed');
+      }
     } finally {
       setScanning(false);
       void stopThermalPrinterScan();
@@ -92,8 +143,15 @@ export default function PrinterScreen() {
     try {
       await testThermalPrinter(registered);
       setNotice('tested');
-    } catch {
-      setNotice('testFailed');
+    } catch (error) {
+      const code = thermalErrorCode(error);
+      if (code === 'permission') {
+        setNotice('permissionDenied');
+      } else if (code === 'bluetooth-off') {
+        setNotice('bluetoothOff');
+      } else {
+        setNotice('testFailed');
+      }
     } finally {
       setBusyAddress(null);
     }
@@ -105,6 +163,26 @@ export default function PrinterScreen() {
     setNotice('cleared');
   }, []);
 
+  const setFontSize = useCallback(async (size: PrintFontSize) => {
+    if (!isAdmin || size === printFontSize) {
+      return;
+    }
+    setPrintFontSize(size);
+    setNotice(null);
+    await savePrintFontSize(size);
+    setNotice('fontSaved');
+  }, [isAdmin, printFontSize]);
+
+  const setPaperWidth = useCallback(async (width: PrintPaperWidth) => {
+    if (!isAdmin || width === printPaperWidth) {
+      return;
+    }
+    setPrintPaperWidth(width);
+    setNotice(null);
+    await savePrintPaperWidth(width);
+    setNotice('paperSaved');
+  }, [isAdmin, printPaperWidth]);
+
   const noticeText = useMemo(() => {
     switch (notice) {
       case 'saved':
@@ -115,10 +193,18 @@ export default function PrinterScreen() {
         return t('printer.cleared');
       case 'scanFailed':
         return t('printer.scanFailed');
+      case 'permissionDenied':
+        return t('printer.permissionDenied');
+      case 'bluetoothOff':
+        return t('printer.bluetoothOff');
       case 'testFailed':
         return t('printer.testFailed');
       case 'unsupported':
         return t('printer.unsupported');
+      case 'fontSaved':
+        return t('printer.fontSaved');
+      case 'paperSaved':
+        return t('printer.paperSaved');
       default:
         return null;
     }
@@ -138,7 +224,9 @@ export default function PrinterScreen() {
             <>
               <Text className="mt-2 text-base font-semibold text-ink">{registered.name}</Text>
               <Text className="mt-0.5 text-sm text-muted">{registered.address}</Text>
-              <Text className="mt-2 text-sm text-muted">{t('printer.paper')}</Text>
+              <Text className="mt-2 text-sm text-muted">
+                {t('printer.paperActive', { mm: printPaperWidth })}
+              </Text>
               <View className="mt-3 flex-row gap-2">
                 <ActionChip
                   label={t('printer.test')}
@@ -160,6 +248,68 @@ export default function PrinterScreen() {
             <Text className="mt-2 text-sm text-muted">{t('printer.none')}</Text>
           )}
         </View>
+
+        {isAdmin ? (
+          <>
+            <View className="overflow-hidden rounded-lg border border-line bg-surface px-4 py-3">
+              <Text className="text-sm font-semibold text-muted">{t('printer.paperSize')}</Text>
+              <Text className="mt-1 text-sm text-muted">{t('printer.paperSizeHint')}</Text>
+              <View className="mt-3 flex-row gap-1 rounded-lg bg-canvas p-1">
+                {PRINT_PAPER_WIDTHS.map((width) => {
+                  const selected = printPaperWidth === width;
+                  return (
+                    <Pressable
+                      key={width}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      accessibilityLabel={t(PAPER_LABELS[width])}
+                      onPress={() => void setPaperWidth(width)}
+                      className={`h-10 min-w-0 flex-1 items-center justify-center rounded-lg px-1 ${
+                        selected ? 'bg-accent' : ''
+                      }`}
+                    >
+                      <Text
+                        numberOfLines={1}
+                        className={`text-[13px] font-semibold ${selected ? 'text-accent-ink' : 'text-ink'}`}
+                      >
+                        {t(PAPER_LABELS[width])}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View className="overflow-hidden rounded-lg border border-line bg-surface px-4 py-3">
+              <Text className="text-sm font-semibold text-muted">{t('printer.fontSize')}</Text>
+              <Text className="mt-1 text-sm text-muted">{t('printer.fontSizeHint')}</Text>
+              <View className="mt-3 flex-row gap-1 rounded-lg bg-canvas p-1">
+                {PRINT_FONT_SIZES.map((size) => {
+                  const selected = printFontSize === size;
+                  return (
+                    <Pressable
+                      key={size}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      accessibilityLabel={t(FONT_LABELS[size])}
+                      onPress={() => void setFontSize(size)}
+                      className={`h-10 min-w-0 flex-1 items-center justify-center rounded-lg px-1 ${
+                        selected ? 'bg-accent' : ''
+                      }`}
+                    >
+                      <Text
+                        numberOfLines={1}
+                        className={`text-[13px] font-semibold ${selected ? 'text-accent-ink' : 'text-ink'}`}
+                      >
+                        {t(FONT_LABELS[size])}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          </>
+        ) : null}
 
         {supported ? (
           <View className="overflow-hidden rounded-lg border border-line bg-surface">
@@ -232,7 +382,11 @@ export default function PrinterScreen() {
         {noticeText ? (
           <Text
             className={`text-center text-sm ${
-              notice === 'scanFailed' || notice === 'testFailed' || notice === 'unsupported'
+              notice === 'scanFailed' ||
+              notice === 'permissionDenied' ||
+              notice === 'bluetoothOff' ||
+              notice === 'testFailed' ||
+              notice === 'unsupported'
                 ? 'text-danger'
                 : 'text-muted'
             }`}

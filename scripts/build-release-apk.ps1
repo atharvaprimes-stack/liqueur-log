@@ -34,9 +34,14 @@ if (Test-Path $metroTmp) {
 
 New-Item -ItemType Directory -Force -Path (Join-Path $root 'dist') | Out-Null
 
-Write-Host '==> Building release APK (forced rebundle)'
+Write-Host '==> Building release APK (phone ABIs only, minified)'
 Set-Location (Join-Path $root 'android')
-& .\gradlew.bat assembleRelease --rerun-tasks --no-daemon
+& .\gradlew.bat assembleRelease --rerun-tasks --no-daemon `
+  "-PreactNativeArchitectures=armeabi-v7a,arm64-v8a" `
+  "-Pandroid.enableMinifyInReleaseBuilds=true" `
+  "-Pandroid.enableShrinkResourcesInReleaseBuilds=true" `
+  "-Pandroid.enableBundleCompression=true" `
+  "-Pexpo.useLegacyPackaging=true"
 if ($LASTEXITCODE -ne 0) {
   throw "Gradle failed with exit code $LASTEXITCODE"
 }
@@ -44,4 +49,5 @@ if ($LASTEXITCODE -ne 0) {
 $apk = Join-Path $root 'android\app\build\outputs\apk\release\app-release.apk'
 $out = Join-Path $root 'dist\liqueur-log-release.apk'
 Copy-Item -Force $apk $out
-Write-Host "==> APK ready: $out"
+$sizeMb = [math]::Round((Get-Item $out).Length / 1MB, 1)
+Write-Host "==> APK ready: $out ($sizeMb MB)"

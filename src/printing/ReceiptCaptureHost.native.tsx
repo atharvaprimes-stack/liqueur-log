@@ -3,10 +3,15 @@ import { View } from 'react-native';
 import ViewShot, { type ViewShotRef } from 'react-native-view-shot';
 
 import { ThermalReceipt } from '../components/ThermalReceipt';
+import { getPrintFontSize, type PrintFontSize } from './printFontSize';
+import { getPrintPaperWidth, type PrintPaperWidth } from './printPaperWidth';
 import { registerReceiptCaptureRunner, type ReceiptCaptureJob } from './receiptCapture';
-import { THERMAL_PAPER_DOTS } from './thermalConstants';
+import { thermalPaperDots } from './thermalConstants';
 
-const CAPTURE_WIDTH = THERMAL_PAPER_DOTS;
+type CaptureLayout = {
+  fontSize: PrintFontSize;
+  paperWidth: PrintPaperWidth;
+};
 
 /**
  * Off-screen host that rasterizes ThermalReceipt for ESC/POS image print.
@@ -15,14 +20,31 @@ const CAPTURE_WIDTH = THERMAL_PAPER_DOTS;
 export function ReceiptCaptureHost() {
   const shotRef = useRef<ViewShotRef>(null);
   const [job, setJob] = useState<ReceiptCaptureJob | null>(null);
+  const [layout, setLayout] = useState<CaptureLayout | null>(null);
 
   useEffect(() => {
     registerReceiptCaptureRunner((next) => setJob(next));
     return () => registerReceiptCaptureRunner(null);
   }, []);
 
+  useEffect(() => {
+    if (!job) {
+      setLayout(null);
+      return;
+    }
+    let cancelled = false;
+    void Promise.all([getPrintFontSize(), getPrintPaperWidth()]).then(([fontSize, paperWidth]) => {
+      if (!cancelled) {
+        setLayout({ fontSize, paperWidth });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [job]);
+
   const onLayout = useCallback(() => {
-    if (!job || !shotRef.current?.capture) {
+    if (!job || !layout || !shotRef.current?.capture) {
       return;
     }
     const active = job;
@@ -39,11 +61,13 @@ export function ReceiptCaptureHost() {
           .finally(() => setJob((current) => (current === active ? null : current)));
       }, 280);
     });
-  }, [job]);
+  }, [job, layout]);
 
-  if (!job) {
+  if (!job || !layout) {
     return null;
   }
+
+  const captureWidth = thermalPaperDots(layout.paperWidth);
 
   return (
     <View
@@ -58,13 +82,19 @@ export function ReceiptCaptureHost() {
           format: 'png',
           quality: 1,
           result: 'base64',
-          width: CAPTURE_WIDTH,
+          width: captureWidth,
         }}
-        style={{ width: CAPTURE_WIDTH, backgroundColor: '#ffffff' }}
+        style={{ width: captureWidth, backgroundColor: '#ffffff' }}
         onLayout={onLayout}
       >
-        <View collapsable={false} style={{ width: CAPTURE_WIDTH, backgroundColor: '#ffffff' }}>
-          <ThermalReceipt receipt={job.receipt} copy={job.copy} />
+        <View collapsable={false} style={{ width: captureWidth, backgroundColor: '#ffffff' }}>
+          <ThermalReceipt
+            receipt={job.receipt}
+            copy={job.copy}
+            variant="print"
+            printFontSize={layout.fontSize}
+            printPaperWidth={layout.paperWidth}
+          />
         </View>
       </ViewShot>
     </View>

@@ -22,7 +22,7 @@ export function registerReceiptCaptureRunner(next: CaptureRunner | null): void {
   }
 }
 
-/** Renders the 58mm slip off-screen and returns PNG base64 (no data-URI prefix). */
+/** Renders the thermal slip off-screen (58 or 80mm per preference) and returns PNG base64. */
 export function captureReceiptPng(receipt: ReceiptPayload, copy: ReceiptCopy): Promise<string> {
   return new Promise((resolve, reject) => {
     const job: ReceiptCaptureJob = { receipt, copy, resolve, reject };

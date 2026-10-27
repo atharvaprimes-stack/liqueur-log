@@ -6,7 +6,6 @@ import { File as ExpoFile, Paths } from 'expo-file-system';
 import type { ReceiptPayload } from '../domain/billing';
 import { buildReceiptDocument, type ReceiptCopy } from '../domain/receiptDocument';
 import { buildReceiptPdf } from './receiptPdf';
-import { receiptQrDataUri } from './receiptQr';
 
 export type ShareReceiptResult = 'shared' | 'downloaded' | 'unopened';
 
@@ -59,11 +58,11 @@ export async function shareReceipt(receipt: ReceiptPayload, copy: ReceiptCopy): 
 
 export async function printReceipt(receipt: ReceiptPayload, copy: ReceiptCopy): Promise<void> {
   if (Platform.OS === 'web') {
-    const document = buildReceiptDocument(receipt, copy, await receiptQrDataUri());
+    const document = buildReceiptDocument(receipt, copy);
     await printReceiptHtml(document.html);
     return;
   }
-  // Registered 58mm Bluetooth thermal (e.g. Posiflow PSF588) — ESC/POS, no system dialog.
+  // Registered Bluetooth thermal (58/80mm per preference) — ESC/POS, no system dialog.
   const thermal = await import('./thermalPrint');
   if (await thermal.hasThermalPrinter()) {
     const printed = await thermal.printThermalReceipt(receipt, copy);
