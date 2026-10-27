@@ -1,8 +1,8 @@
 import { InventoryValidationError } from '../errors';
 import { parseQuantity, parseRupeeToPaise } from '../money';
 
-export const DEFAULT_ITEM_TYPES = ['IMFL', 'Beer', 'Wine', 'Foreign', 'Country', 'Snacks'] as const;
-export const DEFAULT_ITEM_STRENGTHS = ['Strong', 'Mild'] as const;
+export const DEFAULT_ITEM_TYPES = ['NA', 'IMFL', 'Beer', 'Wine', 'Foreign', 'Country', 'Snacks'] as const;
+export const DEFAULT_ITEM_STRENGTHS = ['NA', 'Strong', 'Mild'] as const;
 /** Catch-all supplier pre-selected on Stock Entry when present in the vendor catalog. */
 export const DEFAULT_SUPPLIER_NAME = 'NA';
 export const PAYMENT_TYPES = ['Cash', 'Partial', 'Credit'] as const;

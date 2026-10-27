@@ -1,6 +1,7 @@
 import '../global.css';
 import { StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider, SessionTimeoutProvider } from '../src/context/AuthContext';
@@ -17,16 +18,18 @@ styleSheet.setFlag?.('darkMode', 'class');
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
-      <ThemeProvider>
-        <AuthProvider>
-          <TableRequestsProvider>
-            <SessionTimeoutProvider>
-              <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: 'transparent' } }} />
-              <ReceiptCaptureHost />
-            </SessionTimeoutProvider>
-          </TableRequestsProvider>
-        </AuthProvider>
-      </ThemeProvider>
+      <KeyboardProvider preload={false}>
+        <ThemeProvider>
+          <AuthProvider>
+            <TableRequestsProvider>
+              <SessionTimeoutProvider>
+                <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: 'transparent' } }} />
+                <ReceiptCaptureHost />
+              </SessionTimeoutProvider>
+            </TableRequestsProvider>
+          </AuthProvider>
+        </ThemeProvider>
+      </KeyboardProvider>
     </SafeAreaProvider>
   );
 }

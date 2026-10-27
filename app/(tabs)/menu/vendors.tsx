@@ -1,9 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -15,6 +13,7 @@ import { useTranslation } from 'react-i18next';
 
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
 import { ActionRow } from '../../../src/components/FormActions';
+import { FormSheet } from '../../../src/components/FormScreen';
 import { useAuth } from '../../../src/context/AuthContext';
 import { inventoryErrorCode } from '../../../src/domain/errors';
 import { type Vendor } from '../../../src/domain/models/inventory';
@@ -153,13 +152,9 @@ export default function ManageVendorsScreen() {
       />
 
       <Modal visible={editor !== null} transparent animationType="slide" onRequestClose={() => !saving && setEditor(null)}>
-        <KeyboardAvoidingView
-          style={themeStyle}
-          className="flex-1 justify-end bg-black/70"
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
+        <View style={themeStyle} className="flex-1 justify-end bg-black/70">
           <Pressable accessibilityRole="button" className="flex-1" onPress={() => !saving && setEditor(null)} />
-          <View className="rounded-t-lg border border-line bg-surface px-4 pb-8 pt-4">
+          <FormSheet>
             {confirmDelete && editor?.mode === 'edit' ? (
               <>
                 <Text className="text-title font-semibold text-ink">
@@ -247,8 +242,8 @@ export default function ManageVendorsScreen() {
                 ) : null}
               </>
             )}
-          </View>
-        </KeyboardAvoidingView>
+          </FormSheet>
+        </View>
       </Modal>
     </ScreenWrapper>
   );

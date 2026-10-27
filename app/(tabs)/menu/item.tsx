@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -16,6 +15,7 @@ import { Redirect, useLocalSearchParams } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { ActionRow } from '../../../src/components/FormActions';
+import { FormScreen } from '../../../src/components/FormScreen';
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
 import { leaveScreen } from '../../../src/navigation/leave';
 import { useAuth } from '../../../src/context/AuthContext';
@@ -37,8 +37,8 @@ const EMPTY_FORM: CatalogItemInput = {
   nameEn: '',
   nameMr: '',
   brand: '',
-  liquorType: 'IMFL',
-  subType: 'Strong',
+  liquorType: 'NA',
+  subType: 'NA',
   serviceStation: 'bar',
   volumeMl: '',
   purchasePrice: '',
@@ -46,6 +46,17 @@ const EMPTY_FORM: CatalogItemInput = {
   initialStock: '0',
   lowStockThreshold: '0',
 };
+
+function preferCatalogTerm(terms: { name: string }[], current: string): string {
+  if (terms.some((term) => term.name === current)) {
+    return current;
+  }
+  const na = terms.find((term) => term.name.trim().toLowerCase() === 'na');
+  if (na) {
+    return na.name;
+  }
+  return terms[0]?.name ?? current;
+}
 
 const inputClass = 'h-12 rounded-lg border border-line bg-canvas px-3 text-base text-ink';
 
@@ -243,16 +254,17 @@ export default function ItemFormScreen() {
       return;
     }
     setForm((current) => {
-      const liquorType = itemTypes.some((term) => term.name === current.liquorType)
-        ? current.liquorType
-        : (itemTypes[0]?.name ?? current.liquorType);
-      const subType = itemStrengths.some((term) => term.name === current.subType)
-        ? current.subType
-        : (itemStrengths[0]?.name ?? current.subType);
+      const liquorType = preferCatalogTerm(itemTypes, current.liquorType);
+      const subType = preferCatalogTerm(itemStrengths, current.subType);
       if (liquorType === current.liquorType && subType === current.subType) {
         return current;
       }
-      return { ...current, liquorType, subType };
+      return {
+        ...current,
+        liquorType,
+        subType,
+        serviceStation: defaultServiceStation(liquorType),
+      };
     });
   }, [itemId, itemStrengths, itemTypes]);
 
@@ -315,13 +327,29 @@ export default function ItemFormScreen() {
 
   return (
     <ScreenWrapper padded={false}>
-      <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView
-          className="flex-1"
-          contentContainerClassName="gap-3 px-4 pb-4 pt-4"
-          keyboardShouldPersistTaps="handled"
-          nestedScrollEnabled
-        >
+      <FormScreen
+        contentContainerClassName="gap-3 px-4 pb-4 pt-4"
+        nestedScrollEnabled
+        footer={
+          <ActionRow
+            pinned
+            leading={{
+              label: t('common.cancel'),
+              onPress: () => leaveScreen('/menu/items'),
+              disabled: saving,
+            }}
+            trailing={{
+              label: t('catalog.save'),
+              onPress: () => {
+                void onSave();
+              },
+              tone: 'accent',
+              busy: saving && !confirmDelete,
+              disabled: Boolean(itemId) && !existing,
+            }}
+          />
+        }
+      >
           <View>
             <Text className="text-title font-semibold text-ink">
               {itemId ? t('catalog.edit') : t('catalog.create')}
@@ -504,26 +532,7 @@ export default function ItemFormScreen() {
               <Text className="text-base font-semibold text-danger">{t('catalog.delete')}</Text>
             </Pressable>
           ) : null}
-        </ScrollView>
-
-        <ActionRow
-          pinned
-          leading={{
-            label: t('common.cancel'),
-            onPress: () => leaveScreen('/menu/items'),
-            disabled: saving,
-          }}
-          trailing={{
-            label: t('catalog.save'),
-            onPress: () => {
-              void onSave();
-            },
-            tone: 'accent',
-            busy: saving && !confirmDelete,
-            disabled: Boolean(itemId) && !existing,
-          }}
-        />
-      </KeyboardAvoidingView>
+      </FormScreen>
 
       {confirmDelete && existing ? (
         <View className="absolute inset-0 items-center justify-center bg-black/70 px-5">

@@ -336,6 +336,7 @@ const resources = {
           confirm: 'Add',
         },
         types: {
+          NA: 'NA',
           IMFL: 'IMFL',
           Beer: 'Beer',
           Wine: 'Wine',
@@ -344,6 +345,7 @@ const resources = {
           Snacks: 'Snacks',
         },
         subTypes: {
+          NA: 'NA',
           Strong: 'Strong',
           Mild: 'Mild',
         },
@@ -1154,6 +1156,7 @@ const resources = {
         },
         types: {
           IMFL: 'आयएमएफएल',
+          NA: 'NA',
           Beer: 'बीअर',
           Wine: 'वाईन',
           Foreign: 'परदेशी दारू',
@@ -1161,6 +1164,7 @@ const resources = {
           Snacks: 'स्नॅक्स',
         },
         subTypes: {
+          NA: 'NA',
           Strong: 'स्ट्राँग',
           Mild: 'माइल्ड',
         },

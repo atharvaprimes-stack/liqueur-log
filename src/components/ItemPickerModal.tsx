@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -11,7 +9,11 @@ import {
   View,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { cssInterop } from 'nativewind';
+
+cssInterop(KeyboardAvoidingView, { className: 'style' });
 
 import { formatRupeeInput } from '../domain/money';
 import {
@@ -78,7 +80,7 @@ export function ItemPickerModal({ visible, items, existingItemIds, onClose, onAd
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={themeStyle} className="flex-1 justify-end">
         <Pressable accessibilityRole="button" className="flex-1 bg-black/50" onPress={onClose} />
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView behavior="padding">
           <View
             className="max-h-[88%] rounded-t-3xl border-t border-line bg-canvas"
             style={{ paddingBottom: insets.bottom + 12 }}
