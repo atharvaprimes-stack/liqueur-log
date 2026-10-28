@@ -6,7 +6,7 @@ import {
   parseCatalogItem,
   parseCatalogTerm,
   parseVendor,
-  resolveServiceStation,
+  resolveStationFlags,
   suggestNextInvoiceNumber,
   type CatalogItemInput,
   type CatalogTerm,
@@ -17,7 +17,7 @@ import {
 } from '../../domain/models/inventory';
 import { newId } from '../../security/id';
 import { isUniqueConstraintError, withDatabase, withLockedTransaction } from '../local/database';
-import { requestSync, syncNow } from '../sync/engine';
+import { pushNow, requestSync } from '../sync/engine';
 import { enqueueDelete, enqueueUpsert, recordAdjustment } from '../sync/outbox';
 
 type ItemRow = {
@@ -31,6 +31,9 @@ type ItemRow = {
   liquor_type: string;
   sub_type: string;
   service_station: string;
+  show_in_bar: number;
+  show_in_kitchen: number;
+  tracks_stock: number;
   volume_ml: number;
   purchase_price: number;
   selling_price: number;
@@ -39,7 +42,8 @@ type ItemRow = {
 };
 
 const ITEM_COLUMNS = `id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
-  service_station, volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold`;
+  service_station, show_in_bar, show_in_kitchen, tracks_stock,
+  volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold`;
 
 export async function listStock(tenantId: string): Promise<StockItem[]> {
   return withDatabase(async (database) => {
@@ -324,7 +328,7 @@ export async function recordPurchase(
         await enqueueUpsert(database, 'items', line.itemId);
       }
     });
-    void syncNow();
+    void pushNow();
   } catch (error) {
     if (error instanceof InventoryValidationError || error instanceof InventoryAccessError) {
       throw error;
@@ -510,8 +514,9 @@ export async function createCatalogItem(input: {
       await database.runAsync(
         `INSERT INTO items (
            id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
-           service_station, volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           service_station, show_in_bar, show_in_kitchen, tracks_stock,
+           volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           itemId,
           input.tenantId,
@@ -523,6 +528,9 @@ export async function createCatalogItem(input: {
           liquorType,
           subType,
           draft.serviceStation,
+          draft.showInBar ? 1 : 0,
+          draft.showInKitchen ? 1 : 0,
+          draft.tracksStock ? 1 : 0,
           draft.volumeMl,
           draft.purchasePrice,
           draft.sellingPrice,
@@ -584,7 +592,8 @@ export async function updateCatalogItem(input: {
       const updated = await database.runAsync(
         `UPDATE items
          SET item_code = ?, name_en = ?, name_mr = ?, brand = ?, liquor_type = ?, sub_type = ?,
-             service_station = ?, volume_ml = ?, purchase_price = ?, selling_price = ?,
+             service_station = ?, show_in_bar = ?, show_in_kitchen = ?, tracks_stock = ?,
+             volume_ml = ?, purchase_price = ?, selling_price = ?,
              low_stock_threshold = ?, updated_at = ?
          WHERE id = ? AND tenant_id = ?`,
         [
@@ -595,6 +604,9 @@ export async function updateCatalogItem(input: {
           liquorType,
           subType,
           draft.serviceStation,
+          draft.showInBar ? 1 : 0,
+          draft.showInKitchen ? 1 : 0,
+          draft.tracksStock ? 1 : 0,
           draft.volumeMl,
           draft.purchasePrice,
           draft.sellingPrice,
@@ -898,6 +910,14 @@ function mapItem(row: ItemRow): StockItem | null {
     return null;
   }
 
+  const stations = resolveStationFlags({
+    show_in_bar: row.show_in_bar,
+    show_in_kitchen: row.show_in_kitchen,
+    tracks_stock: row.tracks_stock,
+    service_station: row.service_station,
+    liquor_type: row.liquor_type,
+  });
+
   return {
     id: row.id,
     tenantId: row.tenant_id,
@@ -908,7 +928,10 @@ function mapItem(row: ItemRow): StockItem | null {
     brand: row.brand,
     liquorType: row.liquor_type,
     subType: row.sub_type,
-    serviceStation: resolveServiceStation(row.service_station, row.liquor_type),
+    serviceStation: stations.serviceStation,
+    showInBar: stations.showInBar,
+    showInKitchen: stations.showInKitchen,
+    tracksStock: stations.tracksStock,
     volumeMl,
     purchasePrice: Math.round(purchasePrice * 100) / 100,
     sellingPrice: Math.round(sellingPrice * 100) / 100,

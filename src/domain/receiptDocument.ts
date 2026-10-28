@@ -2,7 +2,6 @@ import {
   formatBillStamp,
   formatReceiptAmount,
   formatReceiptMath,
-  groupReceiptLinesByStation,
   type ReceiptLine,
   type ReceiptPayload,
 } from './billing';
@@ -24,8 +23,6 @@ export type ReceiptCopy = {
   total: string;
   credit: string;
   pcs: string;
-  bar: string;
-  kitchen: string;
 };
 
 export type ReceiptDocument = {
@@ -43,11 +40,7 @@ export function buildReceiptDocument(receipt: ReceiptPayload, copy: ReceiptCopy)
   const height = pageHeight(receipt, copy);
   const heightMm = ((height / 72) * 25.4).toFixed(2);
   const fileName = receiptFileName(receipt.sequence);
-  const sections = groupReceiptLinesByStation(receipt.lines);
-  const items = [
-    ...sectionBlocks(copy.bar, sections.bar, copy.pcs),
-    ...sectionBlocks(copy.kitchen, sections.kitchen, copy.pcs),
-  ].join('');
+  const items = receipt.lines.map((line) => itemBlock(line, copy.pcs)).join('');
   const payment = receipt.isCredit
     ? `${amountRow(receipt.paymentLabel, receipt.paidAmount)}
       ${amountRow(copy.credit, receipt.balanceAmount)}`
@@ -129,17 +122,6 @@ export function buildReceiptDocument(receipt: ReceiptPayload, copy: ReceiptCopy)
       line-height: 1.1;
       white-space: nowrap;
     }
-    .section {
-      margin-top: 5px;
-      margin-bottom: 1px;
-      font-size: 8px;
-      font-weight: 600;
-      letter-spacing: 0.08em;
-      line-height: 1.2;
-      text-align: center;
-      text-transform: uppercase;
-      opacity: 0.85;
-    }
     .item { margin-top: 6px; }
     .name {
       font-size: 11px;
@@ -202,16 +184,6 @@ export function buildReceiptDocument(receipt: ReceiptPayload, copy: ReceiptCopy)
   return { html, width: RECEIPT_PAGE_WIDTH, height, fileName };
 }
 
-function sectionBlocks(title: string, lines: ReceiptLine[], pcs: string): string[] {
-  if (lines.length === 0) {
-    return [];
-  }
-  return [
-    `<div class="section">· ${escapeHtml(title)} ·</div>`,
-    ...lines.map((line) => itemBlock(line, pcs)),
-  ];
-}
-
 function itemBlock(line: ReceiptLine, pcs: string): string {
   return `<div class="item">
     <div class="name">${escapeHtml(line.label)}</div>
@@ -230,19 +202,12 @@ function amountRow(label: string, amount: number, grand = false): string {
 }
 
 function pageHeight(receipt: ReceiptPayload, copy: ReceiptCopy): number {
-  const sections = groupReceiptLinesByStation(receipt.lines);
   let height = 28 + wrappedLines(receipt.businessName, 16) * 18;
   if (receipt.address.trim()) {
     height += 12;
   }
   height += 12 + 12 + 12;
   height += 12;
-  if (sections.bar.length > 0) {
-    height += 16;
-  }
-  if (sections.kitchen.length > 0) {
-    height += 16;
-  }
   for (const line of receipt.lines) {
     height += 6 + wrappedLines(line.label, 24) * 14 + 14;
   }

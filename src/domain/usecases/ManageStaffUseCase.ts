@@ -183,7 +183,7 @@ export function useManageStaff() {
   const [error, setError] = useState<string | null>(null);
   const forbidden = !currentUser || currentUser.role !== 'ADMIN';
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (options?: { quiet?: boolean }) => {
     if (!currentUser || currentUser.role !== 'ADMIN') {
       setStaff([]);
       setError(null);
@@ -191,7 +191,9 @@ export function useManageStaff() {
       return;
     }
 
-    setIsLoading(true);
+    if (!options?.quiet) {
+      setIsLoading(true);
+    }
     try {
       const { staffGateway } = await import('../../data/repositories/staffRepository');
       const useCase = new ManageStaffUseCase(currentUser, staffGateway);
@@ -215,7 +217,7 @@ export function useManageStaff() {
       }
       const { staffGateway } = await import('../../data/repositories/staffRepository');
       const result = await action(new ManageStaffUseCase(currentUser, staffGateway));
-      await refresh();
+      await refresh({ quiet: true });
       return result;
     },
     [currentUser, refresh],

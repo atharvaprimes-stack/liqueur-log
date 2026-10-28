@@ -12,9 +12,14 @@ import { OrderValidationError } from '../../domain/errors';
 import { newId } from '../../security/id';
 import { isUniqueConstraintError, withDatabase, withLockedTransaction } from '../local/database';
 import { normalizeTableCount } from '../local/rows';
-import { requestSync, syncNow } from '../sync/engine';
+import { pushNow, requestSync } from '../sync/engine';
 import { enqueueDelete, enqueueUpsert } from '../sync/outbox';
-import { resolveServiceStation, tracksStock } from '../../domain/models/inventory';
+import {
+  isServiceStation,
+  resolveServiceStation,
+  tracksStock,
+  type ServiceStation,
+} from '../../domain/models/inventory';
 import {
   isOrderStatus,
   isOrderType,
@@ -66,6 +71,7 @@ type ItemRow = {
   name_mr: string;
   liquor_type: string;
   service_station: string;
+  tracks_stock: number;
   volume_ml: number;
   selling_price: number;
   current_stock: number;
@@ -225,6 +231,8 @@ export async function addOrderItem(input: {
   itemCode?: string;
   itemId?: string;
   quantity: number;
+  /** Active order tab; stamps line routing for dual-station items. */
+  serviceStation?: ServiceStation;
 }): Promise<SaleOrder> {
   if (!Number.isInteger(input.quantity) || input.quantity < 1 || input.quantity > 9999) {
     throw new OrderValidationError('quantity');
@@ -244,7 +252,10 @@ export async function addOrderItem(input: {
       await applyStockDelta(database, input.tenantId, item.id, -input.quantity);
     }
     const unitPrice = Math.round(item.selling_price * 100) / 100;
-    const serviceStation = resolveServiceStation(item.service_station, item.liquor_type);
+    const serviceStation =
+      input.serviceStation && isServiceStation(input.serviceStation)
+        ? input.serviceStation
+        : resolveServiceStation(item.service_station, item.liquor_type);
     for (let index = 0; index < input.quantity; index += 1) {
       await database.runAsync(
         `INSERT INTO order_items (
@@ -463,7 +474,7 @@ export async function settleOrder(input: {
     await enqueueUpsert(database, 'orders', order.id);
     return saved;
   });
-  void syncNow();
+  void pushNow();
   return saved;
 }
 
@@ -559,10 +570,14 @@ async function setLineQuantity(
     throw new OrderValidationError('quantity');
   }
 
-  const catalog = await database.getFirstAsync<{ liquor_type: string; service_station: string }>(
-    'SELECT liquor_type, service_station FROM items WHERE id = ? AND tenant_id = ?',
-    [line.item_id, tenantId],
-  );
+  const catalog = await database.getFirstAsync<{
+    liquor_type: string;
+    service_station: string;
+    tracks_stock: number;
+  }>('SELECT liquor_type, service_station, tracks_stock FROM items WHERE id = ? AND tenant_id = ?', [
+    line.item_id,
+    tenantId,
+  ]);
   if (catalog && itemTracksStock(catalog)) {
     await applyStockDelta(database, tenantId, line.item_id, line.quantity - quantity);
   }
@@ -626,12 +641,14 @@ async function findItem(
   const code = input.itemCode?.trim() ?? '';
   const row = input.itemId
     ? await database.getFirstAsync<ItemRow>(
-        `SELECT id, item_code, name_en, name_mr, liquor_type, service_station, volume_ml, selling_price, current_stock
+        `SELECT id, item_code, name_en, name_mr, liquor_type, service_station, tracks_stock,
+                volume_ml, selling_price, current_stock
          FROM items WHERE id = ? AND tenant_id = ?`,
         [input.itemId, tenantId],
       )
     : await database.getFirstAsync<ItemRow>(
-        `SELECT id, item_code, name_en, name_mr, liquor_type, service_station, volume_ml, selling_price, current_stock
+        `SELECT id, item_code, name_en, name_mr, liquor_type, service_station, tracks_stock,
+                volume_ml, selling_price, current_stock
          FROM items WHERE tenant_id = ? AND item_code = ? COLLATE NOCASE
          ORDER BY item_code LIMIT 1`,
         [tenantId, code],
@@ -744,10 +761,15 @@ function mapLine(row: LineRow): OrderLine {
   };
 }
 
-function itemTracksStock(item: { liquor_type: string; service_station: string }): boolean {
+function itemTracksStock(item: {
+  liquor_type: string;
+  service_station: string;
+  tracks_stock?: number | null;
+}): boolean {
   return tracksStock({
     liquorType: item.liquor_type,
     serviceStation: item.service_station,
+    tracksStock: item.tracks_stock === undefined || item.tracks_stock === null ? undefined : item.tracks_stock !== 0,
   });
 }
 

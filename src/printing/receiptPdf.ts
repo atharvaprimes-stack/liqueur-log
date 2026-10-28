@@ -5,7 +5,6 @@ import {
   formatBillStamp,
   formatReceiptAmount,
   formatReceiptMath,
-  groupReceiptLinesByStation,
   type ReceiptLine,
   type ReceiptPayload,
 } from '../domain/billing';
@@ -56,9 +55,7 @@ function paint(
   headerRow(page, font, copy.billLabel, formatBillStamp(receipt.closedAt), width, cursor, 'left', 'right', 8);
   headerRow(page, font, receipt.heading, receipt.cashierName.trim(), width, cursor, 'left', 'right', 8);
   rule(page, font, '-', width, cursor);
-  const sections = groupReceiptLinesByStation(receipt.lines);
-  paintSection(page, font, copy.bar, sections.bar, copy.pcs, width, cursor);
-  paintSection(page, font, copy.kitchen, sections.kitchen, copy.pcs, width, cursor);
+  paintLines(page, font, receipt.lines, copy.pcs, width, cursor);
   rule(page, font, '=', width, cursor);
   row(page, font, copy.total.toLocaleUpperCase(), formatReceiptAmount(receipt.totalAmount), 12, width, cursor, 2);
   if (receipt.isCredit) {
@@ -72,19 +69,14 @@ function paint(
   center(page, font, copy.poweredBy, 8, width, cursor, 0);
 }
 
-function paintSection(
+function paintLines(
   page: PDFPage | null,
   font: PDFFont,
-  title: string,
-  lines: ReceiptLine[],
+  lines: readonly ReceiptLine[],
   pcs: string,
   width: number,
   cursor: { y: number },
 ): void {
-  if (lines.length === 0) {
-    return;
-  }
-  center(page, font, `· ${title.toLocaleUpperCase()} ·`, 7, width, cursor, 2);
   for (const line of lines) {
     left(page, font, line.label, 10, width, cursor, 0);
     row(

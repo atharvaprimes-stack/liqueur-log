@@ -123,7 +123,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
       setFormError(null);
       setAddingItemId(item.id);
       void cart
-        .addItem(item.id, quantity)
+        .addItem(item.id, quantity, section)
         .then((next) => {
           if (!next) {
             return;
@@ -140,7 +140,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
           setAddingItemId((current) => (current === item.id ? null : current));
         });
     },
-    [cart, pulseLine, searching],
+    [cart, pulseLine, searching, section],
   );
 
   const unitsOnOrder = useCallback(

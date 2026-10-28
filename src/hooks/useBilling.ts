@@ -89,8 +89,6 @@ export function useBilling(): {
           thanks: t('billing.thanks'),
           poweredBy: t('billing.poweredBy'),
           pcs: t('billing.pcs'),
-          bar: t('billing.receiptBar'),
-          kitchen: t('billing.receiptKitchen'),
         },
       });
     },
@@ -124,8 +122,6 @@ export function useBilling(): {
       total: t('billing.grandTotal'),
       credit: t('billing.credit'),
       pcs: t('billing.pcs'),
-      bar: t('billing.receiptBar'),
-      kitchen: t('billing.receiptKitchen'),
     }),
     [t],
   );

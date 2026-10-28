@@ -75,12 +75,16 @@ CREATE TABLE IF NOT EXISTS items (
   liquor_type TEXT NOT NULL,
   sub_type TEXT NOT NULL,
   service_station TEXT NOT NULL DEFAULT 'bar' CHECK (service_station IN ('bar', 'kitchen')),
+  show_in_bar INTEGER NOT NULL DEFAULT 1 CHECK (show_in_bar IN (0, 1)),
+  show_in_kitchen INTEGER NOT NULL DEFAULT 0 CHECK (show_in_kitchen IN (0, 1)),
+  tracks_stock INTEGER NOT NULL DEFAULT 1 CHECK (tracks_stock IN (0, 1)),
   volume_ml INTEGER NOT NULL CHECK (volume_ml > 0),
   purchase_price REAL NOT NULL CHECK (purchase_price >= 0),
   selling_price REAL NOT NULL CHECK (selling_price >= 0),
   current_stock INTEGER NOT NULL DEFAULT 0 CHECK (current_stock >= 0),
   low_stock_threshold INTEGER NOT NULL DEFAULT 0 CHECK (low_stock_threshold >= 0),
   updated_at INTEGER NOT NULL DEFAULT 0,
+  CHECK (show_in_bar + show_in_kitchen >= 1),
   FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE
 );
 

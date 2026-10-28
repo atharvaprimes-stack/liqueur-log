@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 
 import { useAuth } from '../context/auth-context';
@@ -9,6 +9,8 @@ import {
   recordPurchase,
   suggestNextInvoiceForSupplier,
 } from '../data/repositories/inventoryRepository';
+import { scheduleBackgroundSync } from '../data/sync/engine';
+import { onLedgerUpdated } from '../data/sync/ledgerEvents';
 import { InventoryAccessError, InventoryValidationError, inventoryErrorCode, type InventoryErrorCode } from '../domain/errors';
 import { type PurchaseFormInput, type StockItem } from '../domain/models/inventory';
 
@@ -36,42 +38,6 @@ export function useInventory(): {
   const itemsRef = useRef(items);
   itemsRef.current = items;
 
-  useFocusEffect(
-    useCallback(() => {
-      if (!tenantId) {
-        setItems([]);
-        setItemTypes([]);
-        setIsLoading(false);
-        return undefined;
-      }
-
-      const seen = revision.current;
-      let active = true;
-      void Promise.all([listStock(tenantId), listCatalogTerms(tenantId, 'type')])
-        .then(([next, types]) => {
-          if (active && revision.current === seen) {
-            setItems(next);
-            setItemTypes(types.map((term) => term.name));
-            setErrorCode(null);
-          }
-        })
-        .catch(() => {
-          if (active && revision.current === seen) {
-            setErrorCode('unknown');
-          }
-        })
-        .finally(() => {
-          if (active && revision.current === seen) {
-            setIsLoading(false);
-          }
-        });
-
-      return () => {
-        active = false;
-      };
-    }, [tenantId]),
-  );
-
   const reload = useCallback(async () => {
     if (!tenantId) {
       return;
@@ -91,6 +57,49 @@ export function useInventory(): {
       }
     }
   }, [tenantId]);
+
+  useEffect(() => onLedgerUpdated(() => {
+    if (pending.current) {
+      return;
+    }
+    void reload().catch(() => undefined);
+  }), [reload]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!tenantId) {
+        setItems([]);
+        setItemTypes([]);
+        setIsLoading(false);
+        return undefined;
+      }
+
+      const seen = revision.current;
+      let active = true;
+      void reload()
+        .catch(() => {
+          if (active && revision.current === seen) {
+            setErrorCode('unknown');
+          }
+        })
+        .finally(() => {
+          if (active && revision.current === seen) {
+            setIsLoading(false);
+          }
+        });
+
+      void scheduleBackgroundSync().then((didFull) => {
+        if (active && didFull) {
+          return reload();
+        }
+        return undefined;
+      });
+
+      return () => {
+        active = false;
+      };
+    }, [reload, tenantId]),
+  );
 
   const correctStock = useCallback(
     async (itemId: string, nextStock: number) => {

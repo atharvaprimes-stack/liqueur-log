@@ -3,6 +3,7 @@ import { useFocusEffect } from 'expo-router';
 
 import { useAuth } from '../context/auth-context';
 import { loadReportSource } from '../data/repositories/reportRepository';
+import { scheduleBackgroundSync } from '../data/sync/engine';
 import {
   buildBusinessReport,
   resolveReportBounds,
@@ -75,7 +76,17 @@ export function useReport(preset: ReportPreset, fromKey: string, toKey: string):
 
   useFocusEffect(
     useCallback(() => {
+      let active = true;
       void load();
+      void scheduleBackgroundSync().then((didFull) => {
+        if (active && didFull) {
+          return load();
+        }
+        return undefined;
+      });
+      return () => {
+        active = false;
+      };
     }, [load]),
   );
 

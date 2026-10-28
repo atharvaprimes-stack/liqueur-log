@@ -37,6 +37,19 @@ export async function authenticate(mobileNumber: string, mpin: string): Promise<
     throw new AuthError('invalid');
   }
 
+  // Local-first: returning staff unlock from SQLite without waiting on the network.
+  try {
+    const local = await matchLocalSession(mobile, pin);
+    if (local) {
+      return finishLogin(local, mobile, pin, await currentHash(local.user.id));
+    }
+  } catch (error) {
+    if (error instanceof AuthError) {
+      throw error;
+    }
+  }
+
+  // First login / new device — no local user yet, so remote auth is required.
   if (isSupabaseConfigured() && (await isDeviceOnline())) {
     try {
       const remote = await loginRemotely(mobile, pin);
@@ -65,10 +78,6 @@ export async function authenticate(mobileNumber: string, mpin: string): Promise<
       if (error instanceof AuthError) {
         throw error;
       }
-      const local = await matchLocalSession(mobile, pin);
-      if (local) {
-        return finishLogin(local, mobile, pin, await currentHash(local.user.id));
-      }
       // Remote unreachable and no local session — don't mask as bad credentials.
       if (error instanceof RemoteAuthUnavailable) {
         throw error;
@@ -77,20 +86,19 @@ export async function authenticate(mobileNumber: string, mpin: string): Promise<
     }
   }
 
-  const local = await matchLocalSession(mobile, pin);
-  if (!local) {
-    throw new AuthError('invalid');
-  }
-
-  return finishLogin(local, mobile, pin, await currentHash(local.user.id));
+  throw new AuthError('invalid');
 }
 
 async function finishLogin(session: AuthSession, mobile: string, pin: string, mpinHash: string): Promise<AuthSession> {
   await persistSession(session, mpinHash);
   rememberCredentials(mobile, pin);
-  // Drop orphan local ledger rows left after a server wipe, then pull fresh.
-  await ensureLocalLedgerReset().catch(() => undefined);
-  await syncNow().catch(() => undefined);
+  // Drop orphan local ledger rows left after a server wipe. Only block UI when a wipe ran.
+  const wiped = await ensureLocalLedgerReset().catch(() => false);
+  if (wiped) {
+    await syncNow().catch(() => undefined);
+  } else {
+    void syncNow().catch(() => undefined);
+  }
   return session;
 }
 

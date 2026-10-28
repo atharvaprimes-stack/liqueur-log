@@ -134,14 +134,22 @@ function paintTable(painter: Painter, table: SheetTable): void {
     return;
   }
 
+  if ((table.flowColumns ?? 1) > 1) {
+    paintFlowTable(painter, table);
+    return;
+  }
+
   painter.y -= 4;
   const first = table.groups[0];
   if (first) {
     ensure(painter, 18 + groupLead(painter, first));
   }
-  paintColumns(painter, table.columns);
+  const sectionFirst = Boolean(table.sectionPerGroup);
+  if (!sectionFirst) {
+    paintColumns(painter, table.columns);
+  }
   for (const group of table.groups) {
-    paintGroup(painter, table.columns, group);
+    paintGroup(painter, table.columns, group, sectionFirst);
   }
   if (table.extra) {
     ensure(painter, 16, () => paintColumns(painter, table.columns));
@@ -153,24 +161,208 @@ function paintTable(painter: Painter, table: SheetTable): void {
   }
 }
 
+const FLOW_ROW = 16;
+const FLOW_HEADER = 18;
+const FLOW_GAP = 10;
+
+/** Fill left column top→bottom, then right column; equal-width strips on A4. */
+function paintFlowTable(painter: Painter, table: SheetTable): void {
+  const flowColumns = Math.max(2, table.flowColumns ?? 2);
+  const strip = table.columns;
+  painter.y -= 4;
+
+  for (const group of table.groups) {
+    const items = group.bands.flatMap((band) => band.rows);
+    if (group.breakBefore) {
+      forceNewPage(painter, false);
+    }
+
+    const paintChrome = () => {
+      if (group.title) {
+        paintBand(painter, group.title, 18, BAND, 9, INK, true);
+      }
+      if (group.note) {
+        paintNote(painter, group.note);
+      }
+      paintFlowHeaders(painter, strip, flowColumns);
+    };
+
+    const moved = ensure(painter, 18 + FLOW_HEADER + FLOW_ROW, paintChrome);
+    if (!moved) {
+      paintChrome();
+    }
+
+    let columnIndex = 0;
+    let columnTop = painter.y;
+    let y = painter.y;
+    let lowestY = painter.y;
+
+    for (const item of items) {
+      if (y - FLOW_ROW < FOOTER) {
+        if (columnIndex + 1 < flowColumns) {
+          columnIndex += 1;
+          y = columnTop;
+        } else {
+          forceNewPage(painter, true);
+          paintChrome();
+          columnIndex = 0;
+          columnTop = painter.y;
+          y = painter.y;
+          lowestY = painter.y;
+        }
+      }
+
+      paintFlowItem(painter, strip, flowColumns, columnIndex, y, item);
+      y -= FLOW_ROW;
+      if (y < lowestY) {
+        lowestY = y;
+      }
+    }
+
+    painter.y = lowestY - 4;
+  }
+}
+
+function paintFlowHeaders(painter: Painter, strip: SheetColumn[], flowColumns: number): void {
+  const top = painter.y;
+  const stripWidth = (CONTENT_WIDTH - FLOW_GAP * (flowColumns - 1)) / flowColumns;
+  painter.page.drawRectangle({
+    x: MARGIN_X,
+    y: top - FLOW_HEADER,
+    width: CONTENT_WIDTH,
+    height: FLOW_HEADER,
+    color: BAND,
+  });
+
+  for (let columnIndex = 0; columnIndex < flowColumns; columnIndex += 1) {
+    const originX = MARGIN_X + columnIndex * (stripWidth + FLOW_GAP);
+    let x = originX;
+    strip.forEach((column, index) => {
+      const width = stripWidth * column.width;
+      const size = 7.5;
+      const baseline = top - (FLOW_HEADER + size) / 2;
+      if (index > 0) {
+        painter.page.drawLine({
+          start: { x, y: top },
+          end: { x, y: top - FLOW_HEADER },
+          thickness: 0.35,
+          color: LINE,
+        });
+      }
+      drawFitted(
+        painter,
+        column.text,
+        column.align === 'right' ? x + width - 4 : x + 4,
+        baseline,
+        size,
+        MUTED,
+        width - 8,
+        column.align,
+      );
+      x += width;
+    });
+    if (columnIndex > 0) {
+      const gutterX = originX - FLOW_GAP / 2;
+      painter.page.drawLine({
+        start: { x: gutterX, y: top },
+        end: { x: gutterX, y: top - FLOW_HEADER },
+        thickness: 0.6,
+        color: LINE,
+      });
+    }
+  }
+
+  painter.page.drawLine({
+    start: { x: MARGIN_X, y: top - FLOW_HEADER },
+    end: { x: MARGIN_X + CONTENT_WIDTH, y: top - FLOW_HEADER },
+    thickness: 0.7,
+    color: LINE,
+  });
+  painter.y = top - FLOW_HEADER;
+}
+
+function paintFlowItem(
+  painter: Painter,
+  strip: SheetColumn[],
+  flowColumns: number,
+  columnIndex: number,
+  top: number,
+  cells: SheetCell[],
+): void {
+  const stripWidth = (CONTENT_WIDTH - FLOW_GAP * (flowColumns - 1)) / flowColumns;
+  const originX = MARGIN_X + columnIndex * (stripWidth + FLOW_GAP);
+  painter.page.drawLine({
+    start: { x: originX, y: top - FLOW_ROW },
+    end: { x: originX + stripWidth, y: top - FLOW_ROW },
+    thickness: 0.3,
+    color: LINE,
+  });
+
+  let x = originX;
+  strip.forEach((column, index) => {
+    const width = stripWidth * column.width;
+    const cell = cells[index] ?? { text: '' };
+    const size = 8;
+    if (index > 0) {
+      painter.page.drawLine({
+        start: { x, y: top },
+        end: { x, y: top - FLOW_ROW },
+        thickness: 0.25,
+        color: LINE,
+      });
+    }
+    drawFitted(
+      painter,
+      cell.text,
+      column.align === 'right' ? x + width - 4 : x + 4,
+      top - (FLOW_ROW + size) / 2,
+      size,
+      INK,
+      width - 8,
+      column.align,
+    );
+    x += width;
+  });
+}
+
 function groupLead(painter: Painter, group: SheetGroup): number {
   const firstBand = group.bands[0];
   const heading = group.title || group.note ? 18 + noteBlockHeight(painter, group.note) : 0;
   return heading + (firstBand?.title ? 16 : 0) + 16;
 }
 
-function paintGroup(painter: Painter, columns: SheetColumn[], group: SheetGroup): void {
+function paintGroup(
+  painter: Painter,
+  columns: SheetColumn[],
+  group: SheetGroup,
+  sectionFirst = false,
+): void {
   const heading = () => {
-    paintColumns(painter, columns);
-    paintDateBand(painter, group);
+    if (sectionFirst) {
+      paintDateBand(painter, group);
+      paintColumns(painter, columns);
+    } else {
+      paintColumns(painter, columns);
+      paintDateBand(painter, group);
+    }
   };
-  const moved = ensure(painter, groupLead(painter, group), heading);
-  if (!moved) {
-    paintDateBand(painter, group);
+  if (group.breakBefore) {
+    forceNewPage(painter, false);
+    heading();
+  } else {
+    const moved = ensure(painter, groupLead(painter, group), heading);
+    if (!moved) {
+      if (sectionFirst) {
+        paintDateBand(painter, group);
+        paintColumns(painter, columns);
+      } else {
+        paintDateBand(painter, group);
+      }
+    }
   }
 
   for (const band of group.bands) {
-    paintBandRows(painter, columns, group, band);
+    paintBandRows(painter, columns, group, band, sectionFirst);
   }
   if (group.total) {
     ensure(painter, 17, heading);
@@ -187,10 +379,21 @@ function paintDateBand(painter: Painter, group: SheetGroup): void {
   }
 }
 
-function paintBandRows(painter: Painter, columns: SheetColumn[], group: SheetGroup, band: SheetBand): void {
+function paintBandRows(
+  painter: Painter,
+  columns: SheetColumn[],
+  group: SheetGroup,
+  band: SheetBand,
+  sectionFirst = false,
+): void {
   const resume = () => {
-    paintColumns(painter, columns);
-    paintDateBand(painter, group);
+    if (sectionFirst) {
+      paintDateBand(painter, group);
+      paintColumns(painter, columns);
+    } else {
+      paintColumns(painter, columns);
+      paintDateBand(painter, group);
+    }
     if (band.title) {
       paintBand(painter, band.title, 16, rgb(0.975, 0.965, 0.95), 8, INK, false);
     }
@@ -389,11 +592,27 @@ function ensure(painter: Painter, height: number, resume?: () => void): boolean 
   if (painter.y - height >= FOOTER) {
     return false;
   }
+  forceNewPage(painter, true);
+  resume?.();
+  return true;
+}
+
+/** Start a fresh A4 page. Overflow pages show “Continued”; section breaks do not. */
+function forceNewPage(painter: Painter, showContinued: boolean): void {
   painter.page = painter.pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   painter.y = PAGE_HEIGHT - MARGIN_TOP;
   const size = 9;
   const periodWidth = painter.font.widthOfTextAtSize(painter.sheet.period, 8);
-  drawFitted(painter, painter.sheet.businessName, MARGIN_X, painter.y - size, size, INK, CONTENT_WIDTH - periodWidth - 12, 'left');
+  drawFitted(
+    painter,
+    painter.sheet.businessName,
+    MARGIN_X,
+    painter.y - size,
+    size,
+    INK,
+    CONTENT_WIDTH - periodWidth - 12,
+    'left',
+  );
   drawFitted(
     painter,
     painter.sheet.period,
@@ -405,10 +624,10 @@ function ensure(painter: Painter, height: number, resume?: () => void): boolean 
     'right',
   );
   painter.y -= 16;
-  left(painter, painter.sheet.continued, 8, MUTED, 2);
+  if (showContinued) {
+    left(painter, painter.sheet.continued, 8, MUTED, 2);
+  }
   rule(painter, LINE, 0.6, 6);
-  resume?.();
-  return true;
 }
 
 function center(painter: Painter, text: string, size: number, color: ReturnType<typeof rgb>, gap: number): void {

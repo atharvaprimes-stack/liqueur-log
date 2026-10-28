@@ -70,6 +70,7 @@ export const INVENTORY_ERROR_CODES = [
   'type',
   'volume',
   'threshold',
+  'station',
   'sell-below-cost',
   'duplicate-code',
   'has-stock',

@@ -6,6 +6,7 @@ import {
   nextSequenceValue,
   readSequenceNumber,
 } from '../../domain/billing';
+import { resolveStationFlags } from '../../domain/models/inventory';
 import { isUniqueConstraintError } from '../local/database';
 import { normalizeTableCount } from '../local/rows';
 import { rememberAck } from './outbox';
@@ -216,15 +217,19 @@ async function applyItem(database: SQLiteDatabase, tenantId: string, item: Recor
   const saved = await runSavepoint(database, async () => {
     const incomingSerial = Math.round(numberField(item, 'serial_no'));
     const liquorType = textField(item, 'liquor_type');
-    const serviceStation =
-      textField(item, 'service_station').toLowerCase() === 'kitchen' || liquorType.toLowerCase() === 'snacks'
-        ? 'kitchen'
-        : 'bar';
+    const stations = resolveStationFlags({
+      show_in_bar: item.show_in_bar,
+      show_in_kitchen: item.show_in_kitchen,
+      tracks_stock: item.tracks_stock,
+      service_station: textField(item, 'service_station'),
+      liquor_type: liquorType,
+    });
     await database.runAsync(
       `INSERT INTO items (
          id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
-         service_station, volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+         service_station, show_in_bar, show_in_kitchen, tracks_stock,
+         volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          serial_no = CASE
            WHEN excluded.serial_no > 0 THEN excluded.serial_no
@@ -237,6 +242,9 @@ async function applyItem(database: SQLiteDatabase, tenantId: string, item: Recor
          liquor_type = excluded.liquor_type,
          sub_type = excluded.sub_type,
          service_station = excluded.service_station,
+         show_in_bar = excluded.show_in_bar,
+         show_in_kitchen = excluded.show_in_kitchen,
+         tracks_stock = excluded.tracks_stock,
          volume_ml = excluded.volume_ml,
          purchase_price = excluded.purchase_price,
          selling_price = excluded.selling_price,
@@ -254,7 +262,10 @@ async function applyItem(database: SQLiteDatabase, tenantId: string, item: Recor
         textField(item, 'brand'),
         liquorType,
         textField(item, 'sub_type'),
-        serviceStation,
+        stations.serviceStation,
+        stations.showInBar ? 1 : 0,
+        stations.showInKitchen ? 1 : 0,
+        stations.tracksStock ? 1 : 0,
         Math.round(numberField(item, 'volume_ml')),
         numberField(item, 'purchase_price'),
         numberField(item, 'selling_price'),

@@ -19,7 +19,6 @@ import {
   filterByStockStatus,
   filterOrderSection,
   filterStockEntrySearch,
-  isKitchenItem,
   isLowStock,
   isOutOfStock,
   itemNames,
@@ -54,10 +53,11 @@ export default function StockScreen() {
     let bar = 0;
     let kitchen = 0;
     for (const item of items) {
-      if (isKitchenItem(item)) {
-        kitchen += 1;
-      } else {
+      if (item.showInBar) {
         bar += 1;
+      }
+      if (item.showInKitchen) {
+        kitchen += 1;
       }
     }
     return { bar, kitchen };
@@ -65,8 +65,8 @@ export default function StockScreen() {
 
   const sectionItems = useMemo(() => filterOrderSection(items, section), [items, section]);
   const statusFiltered = useMemo(
-    () => (section === 'bar' ? filterByStockStatus(sectionItems, statusFilter) : sectionItems),
-    [section, sectionItems, statusFilter],
+    () => filterByStockStatus(sectionItems, statusFilter),
+    [sectionItems, statusFilter],
   );
   const visibleItems = useMemo(
     () => sortOrderCatalog(filterStockEntrySearch(statusFiltered, search)),
@@ -118,15 +118,12 @@ export default function StockScreen() {
 
   const emptyKind: 'search' | 'filter' | 'catalog' = search.trim()
     ? 'search'
-    : section === 'bar' && statusFilter !== 'all'
+    : statusFilter !== 'all'
       ? 'filter'
       : 'catalog';
 
   const selectSection = (next: OrderCatalogSection) => {
     setSection(next);
-    if (next === 'kitchen') {
-      setStatusFilter('all');
-    }
   };
 
   return (
@@ -201,23 +198,21 @@ export default function StockScreen() {
               </Pressable>
             </View>
 
-            {section === 'bar' ? (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                className="mt-3 max-h-12"
-                contentContainerClassName="items-center gap-2 px-4"
-              >
-                {STOCK_STATUS_FILTERS.map((entry) => (
-                  <StatusFilterChip
-                    key={entry}
-                    label={t(`stock.filters.${entry}`)}
-                    selected={statusFilter === entry}
-                    onPress={() => setStatusFilter(entry)}
-                  />
-                ))}
-              </ScrollView>
-            ) : null}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              className="mt-3 max-h-12"
+              contentContainerClassName="items-center gap-2 px-4"
+            >
+              {STOCK_STATUS_FILTERS.map((entry) => (
+                <StatusFilterChip
+                  key={entry}
+                  label={t(`stock.filters.${entry}`)}
+                  selected={statusFilter === entry}
+                  onPress={() => setStatusFilter(entry)}
+                />
+              ))}
+            </ScrollView>
           </View>
         ) : null}
 

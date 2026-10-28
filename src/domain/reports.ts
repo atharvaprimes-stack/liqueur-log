@@ -174,6 +174,8 @@ export type SheetGroup = {
   note: string | null;
   bands: SheetBand[];
   total: SheetCell[] | null;
+  /** When true, PDF painter starts this group on a fresh page (e.g. catalog stations). */
+  breakBefore?: boolean;
 };
 
 export type SheetTable = {
@@ -183,6 +185,13 @@ export type SheetTable = {
   extra: SheetCell[] | null;
   grand: SheetCell[] | null;
   empty: string | null;
+  /** When true, each group title is painted above its column header (catalog stations). */
+  sectionPerGroup?: boolean;
+  /**
+   * Newspaper-style flow: fill column 1 top→bottom, then column 2 on the same page.
+   * `columns` describe one strip; widths are fractions within that strip.
+   */
+  flowColumns?: number;
 };
 
 export type SummaryPair = {

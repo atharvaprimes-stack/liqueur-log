@@ -21,7 +21,7 @@ import { leaveScreen } from '../../../src/navigation/leave';
 import { useAuth } from '../../../src/context/AuthContext';
 import { inventoryErrorCode } from '../../../src/domain/errors';
 import {
-  defaultServiceStation,
+  defaultStationVisibility,
   itemNames,
   knownTermLabel,
   strengthRequiresVolume,
@@ -39,7 +39,9 @@ const EMPTY_FORM: CatalogItemInput = {
   brand: '',
   liquorType: 'NA',
   subType: 'NA',
-  serviceStation: 'bar',
+  showInBar: true,
+  showInKitchen: false,
+  tracksStock: true,
   volumeMl: '',
   purchasePrice: '',
   sellingPrice: '',
@@ -173,33 +175,51 @@ function ChoiceChip({ label, selected, onPress }: { label: string; selected: boo
   );
 }
 
-function StationSegment({
-  value,
+function StationMultiSelect({
+  showInBar,
+  showInKitchen,
   onChange,
   barLabel,
   kitchenLabel,
   hint,
 }: {
-  value: ServiceStation;
-  onChange: (station: ServiceStation) => void;
+  showInBar: boolean;
+  showInKitchen: boolean;
+  onChange: (next: { showInBar: boolean; showInKitchen: boolean }) => void;
   barLabel: string;
   kitchenLabel: string;
   hint: string;
 }) {
+  const toggle = (station: ServiceStation) => {
+    if (station === 'bar') {
+      const nextBar = !showInBar;
+      if (!nextBar && !showInKitchen) {
+        return;
+      }
+      onChange({ showInBar: nextBar, showInKitchen });
+      return;
+    }
+    const nextKitchen = !showInKitchen;
+    if (!showInBar && !nextKitchen) {
+      return;
+    }
+    onChange({ showInBar, showInKitchen: nextKitchen });
+  };
+
   return (
     <View>
       <Text className="mb-2 text-sm font-semibold text-ink">{hint}</Text>
-      <View className="flex-row rounded-full border border-line bg-surface p-1">
+      <View className="flex-row gap-2">
         {(['bar', 'kitchen'] as const).map((station) => {
-          const selected = value === station;
+          const selected = station === 'bar' ? showInBar : showInKitchen;
           return (
             <Pressable
               key={station}
-              accessibilityRole="radio"
-              accessibilityState={{ selected }}
-              onPress={() => onChange(station)}
-              className={`h-10 min-w-0 flex-1 items-center justify-center rounded-full ${
-                selected ? 'bg-accent' : 'bg-transparent'
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: selected }}
+              onPress={() => toggle(station)}
+              className={`h-10 min-w-0 flex-1 items-center justify-center rounded-full border ${
+                selected ? 'border-accent bg-accent' : 'border-line bg-surface'
               }`}
             >
               <Text className={`text-sm font-semibold ${selected ? 'text-accent-ink' : 'text-ink'}`}>
@@ -209,6 +229,37 @@ function StationSegment({
           );
         })}
       </View>
+    </View>
+  );
+}
+
+function TrackStockToggle({
+  value,
+  onChange,
+  label,
+  hint,
+}: {
+  value: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+  hint: string;
+}) {
+  return (
+    <View>
+      <Pressable
+        accessibilityRole="switch"
+        accessibilityState={{ checked: value }}
+        onPress={() => onChange(!value)}
+        className="flex-row items-center justify-between rounded-lg border border-line bg-surface px-3 py-3"
+      >
+        <Text className="text-sm font-semibold text-ink">{label}</Text>
+        <View
+          className={`h-7 w-12 justify-center rounded-full px-0.5 ${value ? 'bg-accent' : 'bg-line'}`}
+        >
+          <View className={`h-6 w-6 rounded-full bg-canvas ${value ? 'self-end' : 'self-start'}`} />
+        </View>
+      </Pressable>
+      <Text className="mt-1 text-xs text-muted">{hint}</Text>
     </View>
   );
 }
@@ -240,7 +291,9 @@ export default function ItemFormScreen() {
       brand: existing.brand,
       liquorType: existing.liquorType,
       subType: existing.subType,
-      serviceStation: existing.serviceStation,
+      showInBar: existing.showInBar,
+      showInKitchen: existing.showInKitchen,
+      tracksStock: existing.tracksStock,
       volumeMl: String(existing.volumeMl),
       purchasePrice: formatRupeeInput(existing.purchasePrice),
       sellingPrice: formatRupeeInput(existing.sellingPrice),
@@ -263,7 +316,7 @@ export default function ItemFormScreen() {
         ...current,
         liquorType,
         subType,
-        serviceStation: defaultServiceStation(liquorType),
+        ...defaultStationVisibility(liquorType),
       };
     });
   }, [itemId, itemStrengths, itemTypes]);
@@ -314,7 +367,7 @@ export default function ItemFormScreen() {
     }
   };
 
-  const kitchen = form.serviceStation === 'kitchen';
+  const kitchenOnly = form.showInKitchen && !form.showInBar;
   const showVolume = strengthRequiresVolume(form.subType);
   const typeChoices = choiceNames(
     itemTypes.map((term) => term.name),
@@ -362,12 +415,26 @@ export default function ItemFormScreen() {
             <Text className="text-sm text-danger">{t('catalog.errors.unknown-item')}</Text>
           ) : null}
 
-          <StationSegment
-            value={form.serviceStation}
-            onChange={(serviceStation) => patch({ serviceStation })}
+          <StationMultiSelect
+            showInBar={form.showInBar}
+            showInKitchen={form.showInKitchen}
+            onChange={(stations) => {
+              const kitchenOnlyNext = stations.showInKitchen && !stations.showInBar;
+              patch({
+                ...stations,
+                tracksStock: kitchenOnlyNext ? false : form.tracksStock || stations.showInBar,
+              });
+            }}
             barLabel={t('catalog.stationBar')}
             kitchenLabel={t('catalog.stationKitchen')}
             hint={t('catalog.station')}
+          />
+
+          <TrackStockToggle
+            value={form.tracksStock}
+            onChange={(tracksStock) => patch({ tracksStock })}
+            label={t('catalog.tracksStock')}
+            hint={t('catalog.tracksStockHint')}
           />
 
           <FormCard title={t('catalog.basicInfo')}>
@@ -429,7 +496,7 @@ export default function ItemFormScreen() {
                     onPress={() =>
                       patch({
                         liquorType: type,
-                        serviceStation: defaultServiceStation(type),
+                        ...defaultStationVisibility(type),
                       })
                     }
                   />
@@ -479,7 +546,7 @@ export default function ItemFormScreen() {
             </View>
 
             <View className="mt-3 flex-row gap-3">
-              {isCreate ? (
+              {isCreate && form.tracksStock ? (
                 <Field label={t('catalog.initialStock')} className="min-w-0 flex-1" alignLabel>
                   <TextInput
                     value={form.initialStock}
@@ -493,7 +560,7 @@ export default function ItemFormScreen() {
               ) : null}
               {showVolume ? (
                 <Field
-                  label={t(kitchen ? 'catalog.volumeSnack' : 'catalog.volume')}
+                  label={t(kitchenOnly ? 'catalog.volumeSnack' : 'catalog.volume')}
                   className="min-w-0 flex-1"
                   alignLabel
                 >
@@ -507,16 +574,18 @@ export default function ItemFormScreen() {
                   />
                 </Field>
               ) : null}
-              <Field label={t('catalog.threshold')} className="min-w-0 flex-1" alignLabel>
-                <TextInput
-                  value={form.lowStockThreshold}
-                  onChangeText={(value) => patch({ lowStockThreshold: value.replace(/\D/g, '').slice(0, 4) })}
-                  keyboardType="number-pad"
-                  placeholder="0"
-                  placeholderTextColor={palette.muted}
-                  className={inputClass}
-                />
-              </Field>
+              {form.tracksStock ? (
+                <Field label={t('catalog.threshold')} className="min-w-0 flex-1" alignLabel>
+                  <TextInput
+                    value={form.lowStockThreshold}
+                    onChangeText={(value) => patch({ lowStockThreshold: value.replace(/\D/g, '').slice(0, 4) })}
+                    keyboardType="number-pad"
+                    placeholder="0"
+                    placeholderTextColor={palette.muted}
+                    className={inputClass}
+                  />
+                </Field>
+              ) : null}
             </View>
           </FormCard>
 

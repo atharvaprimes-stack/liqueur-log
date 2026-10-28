@@ -139,6 +139,7 @@ async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
   // After any items-table rebuilds: add + backfill serial numbers.
   await ensureItemSerialNumbers(database);
   await ensureServiceStations(database);
+  await ensureStationVisibility(database);
   await assertSchemaReady(database);
   await maybeResetLocalLedger(database);
 
@@ -155,19 +156,22 @@ async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
 const LEDGER_EPOCH_KEY = 'ledger_epoch';
 const LEDGER_EPOCH = '2026-10-20-server-reset';
 
-/** Clears stale local ledger rows once after a server reset. Safe to call often. */
-export async function ensureLocalLedgerReset(): Promise<void> {
+/**
+ * Clears stale local ledger rows once after a server reset. Safe to call often.
+ * @returns true when operational tables were wiped and a full sync is required before UI reads.
+ */
+export async function ensureLocalLedgerReset(): Promise<boolean> {
   const database = await getDatabase();
-  await maybeResetLocalLedger(database);
+  return maybeResetLocalLedger(database);
 }
 
-async function maybeResetLocalLedger(database: SQLite.SQLiteDatabase): Promise<void> {
+async function maybeResetLocalLedger(database: SQLite.SQLiteDatabase): Promise<boolean> {
   const row = await database.getFirstAsync<{ value: string }>(
     'SELECT value FROM preferences WHERE key = ?',
     [LEDGER_EPOCH_KEY],
   );
   if (row?.value === LEDGER_EPOCH) {
-    return;
+    return false;
   }
 
   console.log('[sqlite] wiping local ledger for epoch', LEDGER_EPOCH);
@@ -177,6 +181,7 @@ async function maybeResetLocalLedger(database: SQLite.SQLiteDatabase): Promise<v
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
     [LEDGER_EPOCH_KEY, LEDGER_EPOCH],
   );
+  return true;
 }
 
 async function wipeOperationalTables(database: SQLite.SQLiteDatabase): Promise<void> {
@@ -351,6 +356,43 @@ async function ensureServiceStations(database: SQLite.SQLiteDatabase): Promise<v
          OR item_id IN (SELECT id FROM items WHERE service_station = 'kitchen')
        )`,
   );
+}
+
+/** Dual-station visibility + explicit stock tracking (shared inventory). */
+async function ensureStationVisibility(database: SQLite.SQLiteDatabase): Promise<void> {
+  const needsBackfill =
+    !(await hasTableColumn(database, 'items', 'show_in_bar')) ||
+    !(await hasTableColumn(database, 'items', 'show_in_kitchen')) ||
+    !(await hasTableColumn(database, 'items', 'tracks_stock'));
+
+  await ensureColumn(
+    database,
+    'items',
+    'show_in_bar',
+    `ALTER TABLE items ADD COLUMN show_in_bar INTEGER NOT NULL DEFAULT 1`,
+  );
+  await ensureColumn(
+    database,
+    'items',
+    'show_in_kitchen',
+    `ALTER TABLE items ADD COLUMN show_in_kitchen INTEGER NOT NULL DEFAULT 0`,
+  );
+  await ensureColumn(
+    database,
+    'items',
+    'tracks_stock',
+    `ALTER TABLE items ADD COLUMN tracks_stock INTEGER NOT NULL DEFAULT 1`,
+  );
+
+  if (needsBackfill) {
+    await database.runAsync(
+      `UPDATE items
+       SET
+         show_in_bar = CASE WHEN service_station = 'kitchen' THEN 0 ELSE 1 END,
+         show_in_kitchen = CASE WHEN service_station = 'kitchen' THEN 1 ELSE 0 END,
+         tracks_stock = CASE WHEN service_station = 'kitchen' THEN 0 ELSE 1 END`,
+    );
+  }
 }
 
 async function hasTableColumn(

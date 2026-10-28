@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 
 import { useAuth } from '../context/auth-context';
@@ -13,9 +13,10 @@ import {
   removeOrderItemUnits,
   setOrderItemQuantity,
 } from '../data/repositories/orderRepository';
+import { onLedgerUpdated } from '../data/sync/ledgerEvents';
 import { OrderValidationError, orderErrorCode, type OrderErrorCode } from '../domain/errors';
 import type { SaleOrder } from '../domain/models/orders';
-import type { StockItem } from '../domain/models/inventory';
+import { tracksStock, type ServiceStation, type StockItem } from '../domain/models/inventory';
 
 export type CartTarget =
   | { kind: 'table'; tableId: string }
@@ -33,8 +34,8 @@ export function useOrderCart(target: CartTarget): {
   clearError: () => void;
   reload: () => Promise<void>;
   remember: (order: SaleOrder) => void;
-  addByCode: (itemCode: string, quantity: number) => Promise<SaleOrder | null>;
-  addItem: (itemId: string, quantity: number) => Promise<SaleOrder | null>;
+  addByCode: (itemCode: string, quantity: number, serviceStation?: ServiceStation) => Promise<SaleOrder | null>;
+  addItem: (itemId: string, quantity: number, serviceStation?: ServiceStation) => Promise<SaleOrder | null>;
   setQuantity: (lineId: string, quantity: number) => Promise<SaleOrder | null>;
   removeUnits: (itemId: string, quantity: number, preferLineId?: string) => Promise<SaleOrder | null>;
   release: () => Promise<boolean>;
@@ -48,6 +49,7 @@ export function useOrderCart(target: CartTarget): {
   const pinnedId = useRef<string | null>(null);
   const pending = useRef(false);
   const revision = useRef(0);
+  const orderRef = useRef<SaleOrder | null>(null);
   const [order, setOrder] = useState<SaleOrder | null>(null);
   const [items, setItems] = useState<StockItem[]>([]);
   const [frequentItemIds, setFrequentItemIds] = useState<string[]>([]);
@@ -56,9 +58,14 @@ export function useOrderCart(target: CartTarget): {
   const [busy, setBusy] = useState(false);
   const [errorCode, setErrorCode] = useState<OrderErrorCode | null>(null);
 
+  const rememberOrder = useCallback((next: SaleOrder | null) => {
+    orderRef.current = next;
+    setOrder(next);
+  }, []);
+
   const reload = useCallback(async () => {
     if (!tenantId || !actorId) {
-      setOrder(null);
+      rememberOrder(null);
       setItems([]);
       setFrequentItemIds([]);
       setMissing(true);
@@ -79,10 +86,10 @@ export function useOrderCart(target: CartTarget): {
     }
     setItems(stock);
     setFrequentItemIds(frequentIds);
-    setOrder(nextOrder);
+    rememberOrder(nextOrder);
     setMissing(nextOrder === null);
     setErrorCode(null);
-  }, [actorId, billId, kind, tableId, tenantId]);
+  }, [actorId, billId, kind, rememberOrder, tableId, tenantId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -106,6 +113,32 @@ export function useOrderCart(target: CartTarget): {
     }, [reload]),
   );
 
+  useEffect(
+    () =>
+      onLedgerUpdated(() => {
+        if (pending.current) {
+          return;
+        }
+        void reload().catch(() => undefined);
+      }),
+    [reload],
+  );
+
+  const refreshStock = useCallback(async () => {
+    if (!tenantId) {
+      return;
+    }
+    const seen = revision.current;
+    try {
+      const stock = await listStock(tenantId);
+      if (seen === revision.current) {
+        setItems(stock);
+      }
+    } catch {
+      // The line is already saved. The next visit reloads stock.
+    }
+  }, [tenantId]);
+
   const runWrite = useCallback(
     async (write: () => Promise<SaleOrder | null>): Promise<{ ok: true; order: SaleOrder | null } | { ok: false }> => {
       if (pending.current) {
@@ -115,6 +148,7 @@ export function useOrderCart(target: CartTarget): {
       revision.current += 1;
       setBusy(true);
       setErrorCode(null);
+      const before = orderRef.current;
       try {
         const next = await write();
         revision.current += 1;
@@ -122,20 +156,16 @@ export function useOrderCart(target: CartTarget): {
           if (next.status === 'OPEN') {
             pinnedId.current = null;
           }
-          setOrder(next);
+          rememberOrder(next);
           setMissing(false);
+          setItems((current) => applyStockDelta(current, before, next));
         } else {
           pinnedId.current = null;
-          setOrder(null);
+          rememberOrder(null);
           setMissing(true);
+          setItems((current) => applyStockDelta(current, before, null));
         }
-        if (tenantId) {
-          try {
-            setItems(await listStock(tenantId));
-          } catch {
-            // The line is already saved. The next visit reloads stock.
-          }
-        }
+        void refreshStock();
         return { ok: true, order: next };
       } catch (error) {
         setErrorCode(orderErrorCode(error));
@@ -145,7 +175,7 @@ export function useOrderCart(target: CartTarget): {
         setBusy(false);
       }
     },
-    [tenantId],
+    [refreshStock, rememberOrder],
   );
 
   const requireOpen = useCallback(() => {
@@ -175,12 +205,14 @@ export function useOrderCart(target: CartTarget): {
   );
 
   const addByCode = useCallback(
-    async (itemCode: string, quantity: number) => guardWrite((actor) => addOrderItem({ ...actor, itemCode, quantity })),
+    async (itemCode: string, quantity: number, serviceStation?: ServiceStation) =>
+      guardWrite((actor) => addOrderItem({ ...actor, itemCode, quantity, serviceStation })),
     [guardWrite],
   );
 
   const addItem = useCallback(
-    async (itemId: string, quantity: number) => guardWrite((actor) => addOrderItem({ ...actor, itemId, quantity })),
+    async (itemId: string, quantity: number, serviceStation?: ServiceStation) =>
+      guardWrite((actor) => addOrderItem({ ...actor, itemId, quantity, serviceStation })),
     [guardWrite],
   );
 
@@ -212,12 +244,15 @@ export function useOrderCart(target: CartTarget): {
     }
   }, [requireOpen, runWrite]);
 
-  const remember = useCallback((next: SaleOrder) => {
-    revision.current += 1;
-    pinnedId.current = next.id;
-    setOrder(next);
-    setMissing(false);
-  }, []);
+  const remember = useCallback(
+    (next: SaleOrder) => {
+      revision.current += 1;
+      pinnedId.current = next.id;
+      rememberOrder(next);
+      setMissing(false);
+    },
+    [rememberOrder],
+  );
 
   return {
     order,
@@ -236,6 +271,34 @@ export function useOrderCart(target: CartTarget): {
     removeUnits,
     release,
   };
+}
+
+function lineQtyByItem(order: SaleOrder | null): Map<string, number> {
+  const qty = new Map<string, number>();
+  for (const line of order?.lines ?? []) {
+    qty.set(line.itemId, (qty.get(line.itemId) ?? 0) + line.quantity);
+  }
+  return qty;
+}
+
+/** Stock on hand moves opposite to open-order quantity. */
+function applyStockDelta(items: StockItem[], before: SaleOrder | null, after: SaleOrder | null): StockItem[] {
+  const prev = lineQtyByItem(before);
+  const next = lineQtyByItem(after);
+  const touched = new Set<string>([...prev.keys(), ...next.keys()]);
+  if (touched.size === 0) {
+    return items;
+  }
+  return items.map((item) => {
+    if (!touched.has(item.id) || !tracksStock(item)) {
+      return item;
+    }
+    const delta = (prev.get(item.id) ?? 0) - (next.get(item.id) ?? 0);
+    if (delta === 0) {
+      return item;
+    }
+    return { ...item, currentStock: item.currentStock + delta };
+  });
 }
 
 async function loadTarget(

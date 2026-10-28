@@ -7,10 +7,11 @@ import type {
   ReportSource,
   SalesDayRow,
 } from '../../domain/reports';
-import { resolveServiceStation, type StockItem } from '../../domain/models/inventory';
+import { resolveStationFlags, type StockItem } from '../../domain/models/inventory';
 
 const ITEM_COLUMNS = `id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
-  service_station, volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold`;
+  service_station, show_in_bar, show_in_kitchen, tracks_stock,
+  volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold`;
 
 type ItemRow = {
   id: string;
@@ -23,6 +24,9 @@ type ItemRow = {
   liquor_type: string;
   sub_type: string;
   service_station: string;
+  show_in_bar: number;
+  show_in_kitchen: number;
+  tracks_stock: number;
   volume_ml: number;
   purchase_price: number;
   selling_price: number;
@@ -243,6 +247,13 @@ function mapItem(row: ItemRow): StockItem | null {
   ) {
     return null;
   }
+  const stations = resolveStationFlags({
+    show_in_bar: row.show_in_bar,
+    show_in_kitchen: row.show_in_kitchen,
+    tracks_stock: row.tracks_stock,
+    service_station: row.service_station,
+    liquor_type: row.liquor_type,
+  });
   return {
     id: row.id,
     tenantId: row.tenant_id,
@@ -253,7 +264,10 @@ function mapItem(row: ItemRow): StockItem | null {
     brand: row.brand,
     liquorType: row.liquor_type,
     subType: row.sub_type,
-    serviceStation: resolveServiceStation(row.service_station, row.liquor_type),
+    serviceStation: stations.serviceStation,
+    showInBar: stations.showInBar,
+    showInKitchen: stations.showInKitchen,
+    tracksStock: stations.tracksStock,
     volumeMl,
     purchasePrice: Math.round(purchasePrice * 100) / 100,
     sellingPrice: Math.round(sellingPrice * 100) / 100,
