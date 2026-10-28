@@ -189,9 +189,6 @@ export function buildReceiptDocument(receipt: ReceiptPayload, copy: ReceiptCopy)
     </div>
     <div class="rule">${DASH}</div>
     ${items}
-    <div class="rule">${DASH}</div>
-    ${amountRow(copy.subtotal, receipt.subtotal)}
-    ${amountRow(copy.roundOff, receipt.roundOff)}
     <div class="rule">${EQUALS}</div>
     ${amountRow(copy.total, receipt.totalAmount, true)}
     ${payment}

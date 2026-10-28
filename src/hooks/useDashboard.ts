@@ -3,6 +3,7 @@ import { useFocusEffect } from 'expo-router';
 
 import { useAuth } from '../context/auth-context';
 import { loadDashboard } from '../data/repositories/dashboardRepository';
+import { syncNow } from '../data/sync/engine';
 import type { DashboardSnapshot } from '../domain/models/dashboard';
 
 export function useDashboard(): {
@@ -25,6 +26,7 @@ export function useDashboard(): {
     }
 
     try {
+      await syncNow().catch(() => undefined);
       const next = await loadDashboard(tenantId);
       setSnapshot(next);
       setError(false);

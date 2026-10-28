@@ -1,10 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
+  FlatList,
   Pressable,
   RefreshControl,
   ScrollView,
-  SectionList,
   Text,
   TextInput,
   View,
@@ -17,12 +17,16 @@ import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
 import {
   compactVolume,
   filterByStockStatus,
+  filterOrderSection,
   filterStockEntrySearch,
-  groupStock,
+  isKitchenItem,
   isLowStock,
+  isOutOfStock,
   itemNames,
-  knownTermLabel,
+  sortOrderCatalog,
   STOCK_STATUS_FILTERS,
+  tracksStock,
+  type OrderCatalogSection,
   type StockItem,
   type StockStatusFilter,
 } from '../../../src/domain/models/inventory';
@@ -34,8 +38,9 @@ export default function StockScreen() {
   const { t, i18n } = useTranslation();
   const { palette } = useTheme();
   const language = i18n.language;
-  const { items, itemTypes, isLoading, errorCode, isAdmin, reload } = useInventory();
+  const { items, isLoading, errorCode, isAdmin, reload } = useInventory();
   const [search, setSearch] = useState('');
+  const [section, setSection] = useState<OrderCatalogSection>('bar');
   const [statusFilter, setStatusFilter] = useState<StockStatusFilter>('all');
   const [refreshing, setRefreshing] = useState(false);
   const [selecting, setSelecting] = useState(false);
@@ -45,15 +50,28 @@ export default function StockScreen() {
     setSearch(transcript);
   }, language);
 
+  const sectionCounts = useMemo(() => {
+    let bar = 0;
+    let kitchen = 0;
+    for (const item of items) {
+      if (isKitchenItem(item)) {
+        kitchen += 1;
+      } else {
+        bar += 1;
+      }
+    }
+    return { bar, kitchen };
+  }, [items]);
+
+  const sectionItems = useMemo(() => filterOrderSection(items, section), [items, section]);
   const statusFiltered = useMemo(
-    () => filterByStockStatus(items, statusFilter),
-    [items, statusFilter],
+    () => (section === 'bar' ? filterByStockStatus(sectionItems, statusFilter) : sectionItems),
+    [section, sectionItems, statusFilter],
   );
-  const searched = useMemo(
-    () => filterStockEntrySearch(statusFiltered, search),
+  const visibleItems = useMemo(
+    () => sortOrderCatalog(filterStockEntrySearch(statusFiltered, search)),
     [search, statusFiltered],
   );
-  const sections = useMemo(() => groupStock(searched, itemTypes), [itemTypes, searched]);
   const filterCount = statusFiltered.length;
   const selectedCount = selectedIds.size;
 
@@ -100,16 +118,46 @@ export default function StockScreen() {
 
   const emptyKind: 'search' | 'filter' | 'catalog' = search.trim()
     ? 'search'
-    : statusFilter !== 'all'
+    : section === 'bar' && statusFilter !== 'all'
       ? 'filter'
       : 'catalog';
+
+  const selectSection = (next: OrderCatalogSection) => {
+    setSection(next);
+    if (next === 'kitchen') {
+      setStatusFilter('all');
+    }
+  };
 
   return (
     <ScreenWrapper padded={false}>
       <View className="flex-1">
         {items.length > 0 || isLoading ? (
           <View className="pb-3 pt-3">
-            <View className="mx-4 h-11 flex-row items-center rounded-xl border border-line bg-surface px-3">
+            <View className="mx-4 flex-row rounded-lg border border-line bg-surface p-1">
+              {(['bar', 'kitchen'] as const).map((tab) => {
+                const active = section === tab;
+                const count = tab === 'bar' ? sectionCounts.bar : sectionCounts.kitchen;
+                return (
+                  <Pressable
+                    key={tab}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                    onPress={() => selectSection(tab)}
+                    className={`h-9 min-w-0 flex-1 items-center justify-center rounded-md ${active ? 'bg-accent' : ''}`}
+                  >
+                    <Text
+                      className={`text-sm font-semibold ${active ? 'text-accent-ink' : 'text-muted'}`}
+                      numberOfLines={1}
+                    >
+                      {t(tab === 'bar' ? 'billing.barItems' : 'billing.kitchenItems')} ({count})
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View className="mx-4 mt-3 h-11 flex-row items-center rounded-xl border border-line bg-surface px-3">
               <Ionicons name="search" size={18} color={palette.muted} />
               <TextInput
                 value={search}
@@ -153,21 +201,23 @@ export default function StockScreen() {
               </Pressable>
             </View>
 
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              className="mt-3 max-h-12"
-              contentContainerClassName="items-center gap-2 px-4"
-            >
-              {STOCK_STATUS_FILTERS.map((entry) => (
-                <StatusFilterChip
-                  key={entry}
-                  label={t(`stock.filters.${entry}`)}
-                  selected={statusFilter === entry}
-                  onPress={() => setStatusFilter(entry)}
-                />
-              ))}
-            </ScrollView>
+            {section === 'bar' ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                className="mt-3 max-h-12"
+                contentContainerClassName="items-center gap-2 px-4"
+              >
+                {STOCK_STATUS_FILTERS.map((entry) => (
+                  <StatusFilterChip
+                    key={entry}
+                    label={t(`stock.filters.${entry}`)}
+                    selected={statusFilter === entry}
+                    onPress={() => setStatusFilter(entry)}
+                  />
+                ))}
+              </ScrollView>
+            ) : null}
           </View>
         ) : null}
 
@@ -178,13 +228,12 @@ export default function StockScreen() {
         {isLoading ? (
           <SkeletonRows />
         ) : (
-          <SectionList
-            sections={sections}
+          <FlatList
+            data={visibleItems}
             keyExtractor={(item) => item.id}
             className="flex-1"
-            contentContainerStyle={{ flexGrow: sections.length === 0 ? 1 : undefined, paddingBottom: 12 }}
-            stickySectionHeadersEnabled
-            extraData={{ language, selecting, selectedCount, statusFilter }}
+            contentContainerStyle={{ flexGrow: visibleItems.length === 0 ? 1 : undefined, paddingBottom: 12 }}
+            extraData={{ language, selecting, selectedCount, statusFilter, section }}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             refreshControl={
@@ -196,13 +245,6 @@ export default function StockScreen() {
                 tintColor={palette.accent}
                 colors={[palette.accent]}
               />
-            }
-            renderSectionHeader={({ section }) =>
-              sections.length < 2 ? null : (
-                <Text className="bg-canvas px-4 pb-1 pt-3 text-[13px] font-medium text-muted">
-                  {knownTermLabel('types', section.liquorType, t)}
-                </Text>
-              )
             }
             renderItem={({ item }) => (
               <StockRow
@@ -325,17 +367,20 @@ function StockRow({
   const name = itemNames(item, language).primary;
   const volume = compactVolume(item);
   const detail = `#${item.serialNo} · ${item.itemCode} · ${t(volume.key, volume.values)}`;
-  const low = isLowStock(item);
+  const stocked = tracksStock(item);
+  const low = stocked && isLowStock(item);
   let status = '';
   let statusLabel = '';
-  if (item.currentStock === 0) {
+  if (stocked && isOutOfStock(item)) {
     status = t('stock.statusOut');
     statusLabel = t('stock.out');
   } else if (low) {
     status = t('stock.statusLow');
     statusLabel = t('stock.low');
   }
-  const rowLabel = t('stock.rowLabel', { name, detail, count: item.currentStock, status });
+  const rowLabel = stocked
+    ? t('stock.rowLabel', { name, detail, count: item.currentStock, status })
+    : `${name}. ${detail}`;
   const rowClass = 'min-h-16 flex-row items-center gap-3 border-b border-line px-4 py-2';
 
   const body = (
@@ -372,12 +417,14 @@ function StockRow({
           ) : null}
         </View>
       </View>
-      <Text
-        className={`min-w-12 shrink-0 text-right text-base font-semibold ${low ? 'text-danger' : 'text-ink'}`}
-        style={{ fontVariant: ['tabular-nums'] }}
-      >
-        {item.currentStock}
-      </Text>
+      {stocked ? (
+        <Text
+          className={`min-w-12 shrink-0 text-right text-base font-semibold ${low ? 'text-danger' : 'text-ink'}`}
+          style={{ fontVariant: ['tabular-nums'] }}
+        >
+          {item.currentStock}
+        </Text>
+      ) : null}
     </>
   );
 

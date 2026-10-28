@@ -4,6 +4,7 @@ import { MOBILE_PATTERN, MPIN_PATTERN } from '../../domain/models/auth';
 import { hashMpin, verifyMpin } from '../../security/mpin';
 import {
   clearSessionCredentials,
+  hydrateSessionCredentials,
   setSessionCredentials,
   setSessionInteractionAt,
 } from '../../security/sessionCredentials';
@@ -128,6 +129,8 @@ export async function restoreSession(): Promise<AuthSession | null> {
   }
 
   setSessionInteractionAt(session.last_interaction_at);
+  // Sync RPCs need the plaintext MPIN; restore it from device storage.
+  await hydrateSessionCredentials();
   return { user, tenant };
 }
 

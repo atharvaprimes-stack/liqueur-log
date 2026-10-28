@@ -4,7 +4,13 @@ import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { formatInr } from '../domain/money';
-import { filterStock, itemNames, volumeMessage, type StockItem } from '../domain/models/inventory';
+import {
+  filterStock,
+  itemNames,
+  tracksStock,
+  volumeMessage,
+  type StockItem,
+} from '../domain/models/inventory';
 import { useTheme } from '../theme/theme-context';
 import { ActionRow } from './FormActions';
 
@@ -66,7 +72,8 @@ export function SaleItemPicker({ visible, items, onClose, onPick }: SaleItemPick
             renderItem={({ item }) => {
               const names = itemNames(item, i18n.language);
               const volume = volumeMessage(item);
-              const out = item.currentStock <= 0;
+              const stocked = tracksStock(item);
+              const out = stocked && item.currentStock <= 0;
               return (
                 <Pressable
                   accessibilityRole="button"
@@ -83,7 +90,10 @@ export function SaleItemPicker({ visible, items, onClose, onPick }: SaleItemPick
                         {names.primary}
                       </Text>
                       <Text className="text-sm text-muted">
-                        {t(volume.key, volume.values)} · {out ? t('billing.out') : t('billing.inStock', { count: item.currentStock })}
+                        {t(volume.key, volume.values)}
+                        {stocked
+                          ? ` · ${out ? t('billing.out') : t('billing.inStock', { count: item.currentStock })}`
+                          : ''}
                       </Text>
                     </View>
                     <Text className="text-base font-semibold text-ink">{formatInr(item.sellingPrice)}</Text>

@@ -38,6 +38,8 @@ export type StockItem = {
   sellingPrice: number;
   currentStock: number;
   lowStockThreshold: number;
+  /** Reserved for per-item photo; unused in UI until upload lands. */
+  imagePath?: string | null;
 };
 
 export type CatalogItemInput = {
@@ -234,7 +236,7 @@ export function volumeMessage(
   values: { ml?: number; amount?: number };
 } {
   if (isKitchenItem(item)) {
-    return { key: 'stock.volume.pack', values: { amount: item.volumeMl } };
+    return { key: 'stock.volume.kitchen', values: {} };
   }
 
   return {
@@ -254,26 +256,42 @@ export function compactVolume(
   values: { ml?: number; amount?: number };
 } {
   if (isKitchenItem(item)) {
-    return { key: 'stock.volume.pack', values: { amount: item.volumeMl } };
+    return { key: 'stock.volume.kitchen', values: {} };
   }
   return { key: 'stock.volume.ml', values: { ml: item.volumeMl } };
 }
 
-export function isOutOfStock(item: Pick<StockItem, 'currentStock'>): boolean {
+type StockAlertItem = Pick<StockItem, 'currentStock' | 'lowStockThreshold' | 'serviceStation' | 'liquorType'>;
+
+export function isOutOfStock(
+  item: Pick<StockItem, 'currentStock'> & Partial<Pick<StockItem, 'serviceStation' | 'liquorType'>>,
+): boolean {
+  if (!tracksStock(item)) {
+    return false;
+  }
   return item.currentStock === 0;
 }
 
-export function isLowStock(item: Pick<StockItem, 'currentStock' | 'lowStockThreshold'>): boolean {
+export function isLowStock(
+  item: Pick<StockItem, 'currentStock' | 'lowStockThreshold'> &
+    Partial<Pick<StockItem, 'serviceStation' | 'liquorType'>>,
+): boolean {
+  if (!tracksStock(item)) {
+    return false;
+  }
   return item.currentStock <= item.lowStockThreshold;
 }
 
 /** On hand, but at or below the low-stock mark (excludes out of stock). */
-export function isRunningLow(item: Pick<StockItem, 'currentStock' | 'lowStockThreshold'>): boolean {
-  return item.currentStock > 0 && isLowStock(item);
+export function isRunningLow(item: StockAlertItem): boolean {
+  return tracksStock(item) && item.currentStock > 0 && isLowStock(item);
 }
 
-/** Above the low-stock mark. */
-export function isInStock(item: Pick<StockItem, 'currentStock' | 'lowStockThreshold'>): boolean {
+/** Above the low-stock mark (kitchen menu items always count as in stock). */
+export function isInStock(item: StockAlertItem): boolean {
+  if (!tracksStock(item)) {
+    return true;
+  }
   return item.currentStock > item.lowStockThreshold;
 }
 
@@ -346,6 +364,18 @@ export function isKitchenItem(item: { serviceStation?: string; liquorType?: stri
   return resolveServiceStation(item.serviceStation, item.liquorType) === 'kitchen';
 }
 
+/** Kitchen menu dishes are not inventory-tracked (Excel NA for stock fields). */
+export function tracksStock(item: { serviceStation?: string; liquorType?: string }): boolean {
+  return !isKitchenItem(item);
+}
+
+/** Excel / form marker meaning the field does not apply to this item. */
+export function isNotApplicable(value: string | null | undefined): boolean {
+  return String(value ?? '')
+    .trim()
+    .toUpperCase() === 'NA';
+}
+
 export type OrderCatalogSection = ServiceStation;
 
 export const TOP_SELLERS_LIMIT = 8;
@@ -369,7 +399,15 @@ export function filterOrderCatalog(
   section: OrderCatalogSection,
   query: string,
 ): StockItem[] {
-  return filterOrderSearch(filterOrderSection(items, section), query);
+  return sortOrderCatalog(filterOrderSearch(filterOrderSection(items, section), query));
+}
+
+export function sortOrderCatalog(items: StockItem[]): StockItem[] {
+  return [...items].sort(
+    (left, right) =>
+      left.serialNo - right.serialNo ||
+      left.itemCode.localeCompare(right.itemCode, undefined, { sensitivity: 'base' }),
+  );
 }
 
 /** Cap to a small grid of frequent sellers for the selected tab; never the full catalog. */
@@ -624,7 +662,8 @@ export function parseCatalogItem(input: CatalogItemInput): CatalogItemDraft {
     }
   }
 
-  const purchasePaise = parseRupeeToPaise(input.purchasePrice);
+  const purchaseRaw = input.purchasePrice.trim();
+  const purchasePaise = isNotApplicable(purchaseRaw) ? 0 : parseRupeeToPaise(purchaseRaw);
   const sellingPaise = parseRupeeToPaise(input.sellingPrice);
   if (purchasePaise === null || sellingPaise === null) {
     throw new InventoryValidationError('price');
@@ -633,16 +672,26 @@ export function parseCatalogItem(input: CatalogItemInput): CatalogItemDraft {
     throw new InventoryValidationError('sell-below-cost');
   }
 
-  const thresholdText = input.lowStockThreshold.trim();
-  const lowStockThreshold = Number(thresholdText);
-  if (!/^\d{1,4}$/.test(thresholdText) || !Number.isInteger(lowStockThreshold)) {
-    throw new InventoryValidationError('threshold');
+  const thresholdRaw = input.lowStockThreshold.trim();
+  let lowStockThreshold: number;
+  if (isNotApplicable(thresholdRaw) || (serviceStation === 'kitchen' && thresholdRaw === '')) {
+    lowStockThreshold = 0;
+  } else {
+    lowStockThreshold = Number(thresholdRaw);
+    if (!/^\d{1,4}$/.test(thresholdRaw) || !Number.isInteger(lowStockThreshold)) {
+      throw new InventoryValidationError('threshold');
+    }
   }
 
-  const stockText = (input.initialStock ?? '0').trim() || '0';
-  const initialStock = Number(stockText);
-  if (!/^\d{1,4}$/.test(stockText) || !Number.isInteger(initialStock) || initialStock > 9999) {
-    throw new InventoryValidationError('quantity');
+  const stockRaw = (input.initialStock ?? '0').trim() || '0';
+  let initialStock: number;
+  if (isNotApplicable(stockRaw)) {
+    initialStock = 0;
+  } else {
+    initialStock = Number(stockRaw);
+    if (!/^\d{1,4}$/.test(stockRaw) || !Number.isInteger(initialStock) || initialStock > 9999) {
+      throw new InventoryValidationError('quantity');
+    }
   }
 
   return {

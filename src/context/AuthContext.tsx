@@ -48,6 +48,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setDatabaseError(null);
         setCurrentUser(session?.user ?? null);
         setCurrentTenant(session?.tenant ?? null);
+        if (session) {
+          void syncNow().catch(() => undefined);
+        }
       } catch (error) {
         console.error('[auth] startup failed', error);
         if (!cancelled) {

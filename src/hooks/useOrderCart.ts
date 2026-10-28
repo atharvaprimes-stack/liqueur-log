@@ -10,6 +10,7 @@ import {
   getOrder,
   listFrequentItemIds,
   releaseEmptyOrder,
+  removeOrderItemUnits,
   setOrderItemQuantity,
 } from '../data/repositories/orderRepository';
 import { OrderValidationError, orderErrorCode, type OrderErrorCode } from '../domain/errors';
@@ -35,6 +36,7 @@ export function useOrderCart(target: CartTarget): {
   addByCode: (itemCode: string, quantity: number) => Promise<SaleOrder | null>;
   addItem: (itemId: string, quantity: number) => Promise<SaleOrder | null>;
   setQuantity: (lineId: string, quantity: number) => Promise<SaleOrder | null>;
+  removeUnits: (itemId: string, quantity: number, preferLineId?: string) => Promise<SaleOrder | null>;
   release: () => Promise<boolean>;
 } {
   const { currentUser } = useAuth();
@@ -188,6 +190,14 @@ export function useOrderCart(target: CartTarget): {
     [guardWrite],
   );
 
+  const removeUnits = useCallback(
+    async (itemId: string, quantity: number, preferLineId?: string) =>
+      guardWrite((actor) =>
+        removeOrderItemUnits({ ...actor, itemId, quantity, preferLineId }),
+      ),
+    [guardWrite],
+  );
+
   const release = useCallback(async () => {
     try {
       const actor = requireOpen();
@@ -223,6 +233,7 @@ export function useOrderCart(target: CartTarget): {
     addByCode,
     addItem,
     setQuantity,
+    removeUnits,
     release,
   };
 }

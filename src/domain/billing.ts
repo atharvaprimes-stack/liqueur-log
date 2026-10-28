@@ -276,13 +276,7 @@ export function buildReceipt(input: {
   appendSection(input.labels.bar, sections.bar);
   appendSection(input.labels.kitchen, sections.kitchen);
 
-  rows.push(
-    dash,
-    pair(input.labels.subtotal, formatReceiptAmount(totals.subtotal)),
-    pair(input.labels.roundOff, formatReceiptAmount(totals.roundOff)),
-    equals,
-    pair(input.labels.total, formatReceiptAmount(input.totalAmount)),
-  );
+  rows.push(equals, pair(input.labels.total, formatReceiptAmount(input.totalAmount)));
   if (input.isCredit) {
     rows.push(pair(input.paymentLabel, formatReceiptAmount(input.paidAmount)), pair(input.labels.credit, formatReceiptAmount(balanceAmount)));
   } else {

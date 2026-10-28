@@ -92,9 +92,15 @@ function parseItemCode(value) {
   return itemCode;
 }
 
+function isNotApplicable(value) {
+  return String(value ?? '')
+    .trim()
+    .toUpperCase() === 'NA';
+}
+
 function parseIntField(value, field, min, max, allowBlank = false) {
   const text = String(value ?? '').trim();
-  if (allowBlank && text === '') {
+  if (allowBlank && (text === '' || isNotApplicable(text))) {
     return null;
   }
   const num = Number(text);
@@ -104,10 +110,13 @@ function parseIntField(value, field, min, max, allowBlank = false) {
   return num;
 }
 
-function parseMoney(value, field) {
+function parseMoney(value, field, { allowNa = false } = {}) {
   const text = String(value ?? '')
     .trim()
     .replace(/,/g, '');
+  if (allowNa && isNotApplicable(text)) {
+    return 0;
+  }
   if (!/^\d+(\.\d{1,2})?$/.test(text)) {
     throw new Error(`Invalid ${field}: "${value}"`);
   }
@@ -262,6 +271,16 @@ function parseItems(rawRows, typeNames, strengthNames) {
         );
       }
 
+      const serviceStation = resolveStation(row.service_station, itemType);
+      const strengthKey = strength.trim().toLowerCase();
+      const volumeRequired = strengthKey === 'mild' || strengthKey === 'strong';
+      const volumeMl =
+        parseIntField(row.volume_ml, 'volume_ml', 1, 20000, !volumeRequired) ?? 1;
+      const lowStockThreshold =
+        parseIntField(row.low_stock_threshold, 'low_stock_threshold', 0, 9999, true) ?? 0;
+      const openingStock =
+        parseIntField(row.opening_stock, 'opening_stock', 0, 999999, true) ?? 0;
+
       items.push({
         itemCode,
         nameEn: cleanLabel(row.name_en, 'name_en'),
@@ -269,17 +288,14 @@ function parseItems(rawRows, typeNames, strengthNames) {
         brand: cleanLabel(row.brand, 'brand'),
         itemType,
         strength,
-        serviceStation: resolveStation(row.service_station, itemType),
-        volumeMl: parseIntField(row.volume_ml, 'volume_ml', 1, 20000),
-        purchasePrice: parseMoney(row.purchase_price, 'purchase_price'),
+        serviceStation,
+        volumeMl,
+        purchasePrice: parseMoney(row.purchase_price, 'purchase_price', { allowNa: true }),
         sellingPrice: parseMoney(row.selling_price, 'selling_price'),
-        lowStockThreshold: parseIntField(
-          row.low_stock_threshold,
-          'low_stock_threshold',
-          0,
-          9999,
-        ),
-        openingStock: parseIntField(row.opening_stock, 'opening_stock', 0, 999999),
+        lowStockThreshold: serviceStation === 'kitchen' ? 0 : lowStockThreshold,
+        openingStock: serviceStation === 'kitchen' && isNotApplicable(row.opening_stock)
+          ? 0
+          : openingStock,
       });
     } catch (error) {
       throw new Error(`items row ${line}: ${error.message}`);
