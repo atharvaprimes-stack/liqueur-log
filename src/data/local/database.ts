@@ -338,10 +338,14 @@ async function ensureServiceStations(database: SQLite.SQLiteDatabase): Promise<v
      SET service_station = 'kitchen'
      WHERE liquor_type = 'Snacks' AND service_station <> 'kitchen'`,
   );
+
+  // Only touch OPEN orders. Updating PAID/closed lines hits order_items_lock_update
+  // ("closed orders are read-only") and aborts DB init — leave historical snapshots alone.
   await database.runAsync(
     `UPDATE order_items
      SET service_station = 'kitchen'
      WHERE service_station <> 'kitchen'
+       AND order_id IN (SELECT id FROM orders WHERE status = 'OPEN')
        AND (
          liquor_type = 'Snacks'
          OR item_id IN (SELECT id FROM items WHERE service_station = 'kitchen')

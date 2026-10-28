@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Modal, Pressable, Text, TextInput, View } from 'react-native';
+import { Modal, Platform, Pressable, Text, TextInput, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,6 +19,11 @@ type RemoveQuantitySheetProps = {
   onConfirm: (quantity: number) => void;
 };
 
+/** Digits only, no leading zeros — positive integers while typing (empty allowed). */
+function sanitizePositiveIntegerInput(value: string): string {
+  return sanitizeQuantityInput(value).replace(/^0+/, '');
+}
+
 export function RemoveQuantitySheet({
   visible,
   title,
@@ -31,10 +36,14 @@ export function RemoveQuantitySheet({
   const insets = useSafeAreaInsets();
   const bottomInset = resolveBottomInset(insets.bottom);
   const [qtyInput, setQtyInput] = useState('1');
+  const [selection, setSelection] = useState<{ start: number; end: number } | undefined>(
+    undefined,
+  );
 
   useEffect(() => {
     if (visible) {
       setQtyInput('1');
+      setSelection(undefined);
     }
   }, [visible]);
 
@@ -74,23 +83,41 @@ export function RemoveQuantitySheet({
             <View className="mt-4 h-14 justify-center rounded-xl border border-line bg-canvas px-4">
               <TextInput
                 value={qtyInput}
-                onChangeText={(value) => setQtyInput(sanitizeQuantityInput(value))}
+                onChangeText={(value) => {
+                  setQtyInput(sanitizePositiveIntegerInput(value));
+                  setSelection(undefined);
+                }}
+                onFocus={() => {
+                  // Select all after focus so replace-typing works; then release control
+                  // so the caret can move normally (Android + centered wide fields break otherwise).
+                  const end = qtyInput.length;
+                  requestAnimationFrame(() => {
+                    setSelection({ start: 0, end });
+                    setTimeout(() => setSelection(undefined), 0);
+                  });
+                }}
                 onBlur={() => {
                   if (qtyInput.trim() === '') {
                     setQtyInput('1');
                   }
+                  setSelection(undefined);
                 }}
+                selection={selection}
                 onSubmitEditing={submit}
                 keyboardType="number-pad"
-                selectTextOnFocus
                 maxLength={4}
                 returnKeyType="done"
                 autoFocus
                 accessibilityLabel={t('billing.quantity')}
                 placeholder="1"
                 placeholderTextColor={palette.muted}
-                className="w-full py-0 text-center text-2xl font-bold text-ink"
-                style={{ margin: 0, padding: 0 }}
+                className="w-full py-0 text-2xl font-bold text-ink"
+                style={{
+                  margin: 0,
+                  padding: 0,
+                  // textAlign:'center' on a wide Android TextInput parks the caret at the far right.
+                  textAlign: Platform.OS === 'android' ? 'left' : 'center',
+                }}
               />
             </View>
             {overMax ? (
@@ -124,3 +151,4 @@ export function RemoveQuantitySheet({
     </Modal>
   );
 }
+

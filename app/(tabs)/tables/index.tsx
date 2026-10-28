@@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
+import { PLATE_WELL_RADIUS, TablePlaceSetting } from '../../../src/components/TablePlaceSetting';
 import { useAuth } from '../../../src/context/AuthContext';
 import { orderErrorCode, type OrderErrorCode } from '../../../src/domain/errors';
 import { formatInr } from '../../../src/domain/money';
@@ -26,87 +27,128 @@ import { resolveBottomInset } from '../../../src/navigation/bottomInset';
 import { useTheme } from '../../../src/theme/theme-context';
 import type { ThemeId, ThemePalette } from '../../../src/theme/themes';
 
+/** Mark width as a fraction of the card content width (keeps cutlery on-screen). */
+const MARK_WIDTH_RATIO = 0.78;
+const MARK_MIN = 64;
+const MARK_MAX = 112;
+
 type CardKind = 'available' | 'occupied' | 'pending';
 
 type FloorCardTone = {
-  /** Solid surface under translucent status tint (dark/amber). */
+  /** Card background. */
   base: string;
-  /** Fill color — solid pastel on light, faint rgba tint on dark/amber. */
+  /** Press overlay tint. */
   tint: string;
   ink: string;
   muted: string;
   badgeBackground: string;
   border: string;
+  /** Solid plate disc (matches the badge art). */
+  plateFill: string;
+  /** Table number on the solid plate. */
+  numberColor: string;
   glow?: string;
 };
 
-const AVAILABLE_LIGHT: FloorCardTone = {
-  base: '#DCFCE7',
-  tint: 'transparent',
-  ink: '#15803D',
-  muted: '#166534',
-  badgeBackground: 'rgba(21, 128, 61, 0.12)',
-  border: 'rgba(21, 128, 61, 0.2)',
-};
-
-const OCCUPIED_LIGHT: FloorCardTone = {
-  base: '#FEE2E2',
-  tint: 'transparent',
-  ink: '#991B1B',
-  muted: '#B91C1C',
-  badgeBackground: 'rgba(153, 27, 27, 0.12)',
-  border: 'rgba(153, 27, 27, 0.2)',
-};
-
-const PENDING_LIGHT: FloorCardTone = {
-  base: '#FEF3C7',
-  tint: 'transparent',
-  ink: '#92400E',
-  muted: '#B45309',
-  badgeBackground: 'rgba(245, 158, 11, 0.16)',
-  border: 'rgba(245, 158, 11, 0.35)',
-  glow: 'rgba(245, 158, 11, 0.45)',
-};
-
-/** Shared faint green tint for dark + amber available cards. */
-const AVAILABLE_TINTED: Omit<FloorCardTone, 'base'> = {
-  tint: 'rgba(34, 197, 94, 0.12)',
-  ink: '#4ADE80',
-  muted: '#4ADE80',
-  badgeBackground: 'rgba(34, 197, 94, 0.18)',
-  border: 'rgba(34, 197, 94, 0.4)',
-};
-
-/** Shared faint crimson tint for dark + amber occupied cards. */
-const OCCUPIED_TINTED: Omit<FloorCardTone, 'base'> = {
-  tint: 'rgba(239, 68, 68, 0.12)',
-  ink: '#F87171',
-  muted: '#F87171',
-  badgeBackground: 'rgba(239, 68, 68, 0.18)',
-  border: 'rgba(239, 68, 68, 0.4)',
-};
-
-/** Shared faint amber tint for dark + amber pending cards. */
-const PENDING_TINTED: Omit<FloorCardTone, 'base'> = {
-  tint: 'rgba(245, 158, 11, 0.14)',
-  ink: '#FBBF24',
-  muted: '#FCD34D',
-  badgeBackground: 'rgba(245, 158, 11, 0.2)',
-  border: 'rgba(251, 191, 36, 0.45)',
-  glow: 'rgba(251, 191, 36, 0.5)',
-};
-
 const FLOOR_CARD_TONES: Record<ThemeId, Record<CardKind, FloorCardTone>> = {
-  light: { available: AVAILABLE_LIGHT, occupied: OCCUPIED_LIGHT, pending: PENDING_LIGHT },
+  light: {
+    available: {
+      base: '#ECFDF5',
+      tint: 'transparent',
+      ink: '#047857',
+      muted: '#059669',
+      badgeBackground: 'rgba(4, 120, 87, 0.12)',
+      border: 'rgba(4, 120, 87, 0.22)',
+      plateFill: '#047857',
+      numberColor: '#ECFDF5',
+    },
+    occupied: {
+      base: '#FEF2F2',
+      tint: 'transparent',
+      ink: '#B91C1C',
+      muted: '#DC2626',
+      badgeBackground: 'rgba(185, 28, 28, 0.12)',
+      border: 'rgba(185, 28, 28, 0.22)',
+      plateFill: '#B91C1C',
+      numberColor: '#FEF2F2',
+    },
+    pending: {
+      base: '#FFFBEB',
+      tint: 'transparent',
+      ink: '#B45309',
+      muted: '#D97706',
+      badgeBackground: 'rgba(180, 83, 9, 0.14)',
+      border: 'rgba(245, 158, 11, 0.4)',
+      glow: 'rgba(245, 158, 11, 0.45)',
+      plateFill: '#B45309',
+      numberColor: '#FFFBEB',
+    },
+  },
   dark: {
-    available: { ...AVAILABLE_TINTED, base: '#1E293B' },
-    occupied: { ...OCCUPIED_TINTED, base: '#1E293B' },
-    pending: { ...PENDING_TINTED, base: '#1E293B' },
+    available: {
+      base: '#1E293B',
+      tint: 'rgba(52, 211, 153, 0.1)',
+      ink: '#34D399',
+      muted: '#6EE7B7',
+      badgeBackground: 'rgba(52, 211, 153, 0.18)',
+      border: 'rgba(52, 211, 153, 0.4)',
+      plateFill: '#059669',
+      numberColor: '#ECFDF5',
+    },
+    occupied: {
+      base: '#1E293B',
+      tint: 'rgba(248, 113, 113, 0.1)',
+      ink: '#F87171',
+      muted: '#FCA5A5',
+      badgeBackground: 'rgba(248, 113, 113, 0.18)',
+      border: 'rgba(248, 113, 113, 0.4)',
+      plateFill: '#DC2626',
+      numberColor: '#FEF2F2',
+    },
+    pending: {
+      base: '#1E293B',
+      tint: 'rgba(251, 191, 36, 0.12)',
+      ink: '#FBBF24',
+      muted: '#FCD34D',
+      badgeBackground: 'rgba(251, 191, 36, 0.2)',
+      border: 'rgba(251, 191, 36, 0.45)',
+      glow: 'rgba(251, 191, 36, 0.5)',
+      plateFill: '#D97706',
+      numberColor: '#FFFBEB',
+    },
   },
   amber: {
-    available: { ...AVAILABLE_TINTED, base: '#211710' },
-    occupied: { ...OCCUPIED_TINTED, base: '#211710' },
-    pending: { ...PENDING_TINTED, base: '#211710' },
+    available: {
+      base: '#211710',
+      tint: 'rgba(16, 185, 129, 0.12)',
+      ink: '#34D399',
+      muted: '#6EE7B7',
+      badgeBackground: 'rgba(16, 185, 129, 0.2)',
+      border: 'rgba(16, 185, 129, 0.42)',
+      plateFill: '#047857',
+      numberColor: '#ECFDF5',
+    },
+    occupied: {
+      base: '#211710',
+      tint: 'rgba(239, 68, 68, 0.12)',
+      ink: '#F87171',
+      muted: '#FCA5A5',
+      badgeBackground: 'rgba(239, 68, 68, 0.2)',
+      border: 'rgba(239, 68, 68, 0.42)',
+      plateFill: '#B91C1C',
+      numberColor: '#FEF2F2',
+    },
+    pending: {
+      base: '#211710',
+      tint: 'rgba(245, 158, 11, 0.14)',
+      ink: '#FBBF24',
+      muted: '#FDE68A',
+      badgeBackground: 'rgba(245, 158, 11, 0.22)',
+      border: 'rgba(251, 191, 36, 0.5)',
+      glow: 'rgba(251, 191, 36, 0.55)',
+      plateFill: '#B45309',
+      numberColor: '#FFFBEB',
+    },
   },
 };
 
@@ -195,7 +237,7 @@ export default function TablesScreen() {
             <Text className="px-0.5 pt-3 text-sm text-danger">{t(`billing.errors.${errorCode}`)}</Text>
           ) : null}
 
-          <View className="mt-3 flex-row flex-wrap">
+          <View className="mt-2 flex-row flex-wrap">
             {floorTables.map((table) => (
               <View key={table.number} className="w-1/2 p-1.5">
                 <TableCard
@@ -302,6 +344,7 @@ function TableCard({ table, onPress }: { table: FloorTable; onPress: () => void 
     table.pendingRequestCount > 0 ? 'pending' : order !== null ? 'occupied' : 'available';
   const tone = FLOOR_CARD_TONES[theme][kind];
   const pulse = useRef(new Animated.Value(0)).current;
+  const [markSize, setMarkSize] = useState(MARK_MIN);
 
   useEffect(() => {
     if (kind !== 'pending') {
@@ -356,6 +399,13 @@ function TableCard({ table, onPress }: { table: FloorTable; onPress: () => void 
           } satisfies Animated.WithAnimatedObject<ViewStyle>)
         : getSoftShadow(palette, 0.5);
 
+  // Keep the number inside the plate well across mark sizes / digit counts.
+  const wellDiameter = markSize * ((PLATE_WELL_RADIUS * 2) / 100);
+  const numberSize = Math.min(
+    wellDiameter * (table.number.length > 2 ? 0.42 : table.number.length > 1 ? 0.52 : 0.62),
+    wellDiameter * 0.7,
+  );
+
   return (
     <Animated.View
       className="w-full overflow-hidden rounded-2xl border"
@@ -365,21 +415,21 @@ function TableCard({ table, onPress }: { table: FloorTable; onPress: () => void 
         accessibilityRole="button"
         accessibilityLabel={t('tables.tableA11y', { number: table.number, status: statusLabel })}
         onPress={onPress}
-        className="min-h-[8.5rem] justify-between p-3.5"
+        className="items-center px-2.5 pb-2.5 pt-2"
         style={({ pressed }) => ({
           backgroundColor: tone.tint,
           opacity: pressed ? 0.92 : 1,
         })}
       >
-        {/* Top: status pill + elapsed time */}
-        <View className="min-h-6 flex-row items-center justify-between gap-2">
+        {/* Top: fixed-height row so available / occupied cards match */}
+        <View className="mb-1.5 h-5 w-full flex-row items-center justify-between gap-2">
           <View className="rounded-full px-2 py-0.5" style={{ backgroundColor: tone.badgeBackground }}>
             <Text className="text-[10px] font-semibold tracking-wide" style={{ color: tone.ink }}>
               {t(statusKey)}
             </Text>
           </View>
           {order ? (
-            <Text className="text-xs font-semibold" style={{ color: tone.muted }}>
+            <Text className="text-[11px] font-semibold" style={{ color: tone.muted }}>
               {formatElapsed(order.createdAt)}
             </Text>
           ) : (
@@ -387,36 +437,57 @@ function TableCard({ table, onPress }: { table: FloorTable; onPress: () => void 
           )}
         </View>
 
-        {/* Center: table number */}
-        <View className="flex-1 items-center justify-center py-2">
-          <Text className="text-3xl font-bold leading-none" style={{ color: tone.ink }}>
-            {table.number}
-          </Text>
+        {/* Center: place setting scales with card width so it never clips */}
+        <View
+          className="w-full items-center justify-center"
+          onLayout={(event) => {
+            const width = event.nativeEvent.layout.width;
+            const next = Math.round(Math.min(MARK_MAX, Math.max(MARK_MIN, width * MARK_WIDTH_RATIO)));
+            setMarkSize((prev) => (prev === next ? prev : next));
+          }}
+        >
+          <View className="items-center justify-center" style={{ height: markSize, width: markSize }}>
+            <TablePlaceSetting size={markSize} color={tone.ink} plateFill={tone.plateFill} />
+            <View className="absolute inset-0 items-center justify-center" pointerEvents="none">
+              <Text
+                className="font-bold leading-none"
+                numberOfLines={1}
+                style={{ color: tone.numberColor, fontSize: numberSize, maxWidth: wellDiameter * 0.9 }}
+              >
+                {table.number}
+              </Text>
+            </View>
+            {kind === 'pending' ? (
+              <View className="absolute right-0 top-0 h-5 min-w-5 items-center justify-center rounded-full bg-amber-700 px-1">
+                <Text className="text-[10px] font-bold leading-none text-white">
+                  {table.pendingRequestCount > 9 ? '9+' : table.pendingRequestCount}
+                </Text>
+              </View>
+            ) : null}
+          </View>
         </View>
 
-        {/* Bottom: bill metrics for occupied / pending */}
-        <View className="min-h-10 justify-end">
+        {/* Bottom: fixed-height footer — empty when available, metrics when occupied/pending */}
+        <View className="mt-2 h-9 w-full items-center justify-center">
           {kind === 'pending' && !order ? (
-            <View className="flex-row items-center gap-1">
+            <View className="flex-row items-center justify-center gap-1">
               <Ionicons name="notifications" size={12} color={tone.ink} />
               <Text className="text-xs font-semibold" numberOfLines={1} style={{ color: tone.ink }}>
                 {t('tables.pendingRequest', { count: table.pendingRequestCount })}
               </Text>
             </View>
           ) : order ? (
-            <View className="gap-0.5">
+            <View className="w-full items-center gap-0.5">
               <Text className="text-sm font-bold" numberOfLines={1} style={{ color: tone.ink }}>
                 {formatInr(order.totalAmount)}
               </Text>
-              <Text className="text-xs font-medium" numberOfLines={1} style={{ color: tone.muted }}>
+              <Text className="text-[11px] font-medium" numberOfLines={1} style={{ color: tone.muted }}>
                 {kind === 'pending'
                   ? t('tables.pendingRequest', { count: table.pendingRequestCount })
                   : t('tables.itemCount', { count: order.itemCount })}
               </Text>
             </View>
-          ) : (
-            <View className="h-8" />
-          )}
+          ) : null}
         </View>
       </Pressable>
     </Animated.View>
