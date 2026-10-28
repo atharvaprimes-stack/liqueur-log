@@ -3,6 +3,7 @@ import { useFocusEffect } from 'expo-router';
 
 import { useAuth } from '../context/auth-context';
 import { loadFloor, startTableSession } from '../data/repositories/orderRepository';
+import { syncNow } from '../data/sync/engine';
 import { OrderValidationError, type OrderErrorCode } from '../domain/errors';
 import { floorTables, openCounterOrder, type FloorTable, type OrderSummary } from '../domain/models/orders';
 
@@ -27,6 +28,7 @@ export function useFloor(): {
       setOpenOrders([]);
       return;
     }
+    await syncNow().catch(() => undefined);
     const floor = await loadFloor(tenantId);
     setTableCount(floor.tableCount);
     setOpenOrders(floor.openOrders);

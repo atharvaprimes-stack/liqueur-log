@@ -67,9 +67,6 @@ export function ThermalReceipt({
       <Rule glyph={dash} type={type} />
       <ReceiptSection title={copy.bar} lines={sections.bar} pcs={copy.pcs} type={type} />
       <ReceiptSection title={copy.kitchen} lines={sections.kitchen} pcs={copy.pcs} type={type} />
-      <Rule glyph={dash} type={type} />
-      <AmountRow label={copy.subtotal} amount={receipt.subtotal} type={type} />
-      <AmountRow label={copy.roundOff} amount={receipt.roundOff} type={type} />
       <Rule glyph={equals} type={type} />
       <AmountRow label={copy.total} amount={receipt.totalAmount} emphasis type={type} />
       {receipt.isCredit ? (

@@ -14,7 +14,7 @@ import { isUniqueConstraintError, withDatabase, withLockedTransaction } from '..
 import { normalizeTableCount } from '../local/rows';
 import { requestSync, syncNow } from '../sync/engine';
 import { enqueueDelete, enqueueUpsert } from '../sync/outbox';
-import { resolveServiceStation } from '../../domain/models/inventory';
+import { resolveServiceStation, tracksStock } from '../../domain/models/inventory';
 import {
   isOrderStatus,
   isOrderType,
@@ -234,12 +234,15 @@ export async function addOrderItem(input: {
     await assertActor(database, input.tenantId, input.actorId);
     const order = await requireOpenOrder(database, input.tenantId, input.orderId);
     const item = await findItem(database, input.tenantId, input);
-    if (item.current_stock < input.quantity) {
+    const stocked = itemTracksStock(item);
+    if (stocked && item.current_stock < input.quantity) {
       throw new OrderValidationError('stock');
     }
 
     // Each unit is its own row so staff can void one serve without editing shared qty.
-    await applyStockDelta(database, input.tenantId, item.id, -input.quantity);
+    if (stocked) {
+      await applyStockDelta(database, input.tenantId, item.id, -input.quantity);
+    }
     const unitPrice = Math.round(item.selling_price * 100) / 100;
     const serviceStation = resolveServiceStation(item.service_station, item.liquor_type);
     for (let index = 0; index < input.quantity; index += 1) {
@@ -285,6 +288,63 @@ export async function setOrderItemQuantity(input: {
     await assertActor(database, input.tenantId, input.actorId);
     const order = await requireOpenOrder(database, input.tenantId, input.orderId);
     await setLineQuantity(database, input.tenantId, order.id, input.lineId, input.quantity);
+    await syncTotal(database, order.id);
+    await touchOrder(database, order.id);
+    return readOrder(database, input.tenantId, order.id);
+  });
+}
+
+/** Void up to `quantity` units of an item (unit rows and/or multi-qty lines). */
+export async function removeOrderItemUnits(input: {
+  tenantId: string;
+  actorId: string;
+  orderId: string;
+  itemId: string;
+  quantity: number;
+  preferLineId?: string;
+}): Promise<SaleOrder> {
+  if (!Number.isInteger(input.quantity) || input.quantity < 1 || input.quantity > 9999) {
+    throw new OrderValidationError('quantity');
+  }
+
+  return withLockedTransaction(async (database) => {
+    await assertActor(database, input.tenantId, input.actorId);
+    const order = await requireOpenOrder(database, input.tenantId, input.orderId);
+    const lines = await database.getAllAsync<{ id: string; quantity: number }>(
+      `SELECT id, quantity FROM order_items
+       WHERE order_id = ? AND item_id = ?
+       ORDER BY rowid DESC`,
+      [order.id, input.itemId],
+    );
+    if (lines.length === 0) {
+      throw new OrderValidationError('unknown-item');
+    }
+
+    const preferred = input.preferLineId
+      ? lines.filter((line) => line.id === input.preferLineId)
+      : [];
+    const rest = lines.filter((line) => line.id !== input.preferLineId);
+    const ordered = [...preferred, ...rest];
+
+    let remaining = input.quantity;
+    for (const line of ordered) {
+      if (remaining <= 0) {
+        break;
+      }
+      const lineQty = Number(line.quantity);
+      if (lineQty <= remaining) {
+        remaining -= lineQty;
+        await setLineQuantity(database, input.tenantId, order.id, line.id, 0);
+      } else {
+        await setLineQuantity(database, input.tenantId, order.id, line.id, lineQty - remaining);
+        remaining = 0;
+      }
+    }
+
+    if (remaining === input.quantity) {
+      throw new OrderValidationError('unknown-item');
+    }
+
     await syncTotal(database, order.id);
     await touchOrder(database, order.id);
     return readOrder(database, input.tenantId, order.id);
@@ -499,7 +559,13 @@ async function setLineQuantity(
     throw new OrderValidationError('quantity');
   }
 
-  await applyStockDelta(database, tenantId, line.item_id, line.quantity - quantity);
+  const catalog = await database.getFirstAsync<{ liquor_type: string; service_station: string }>(
+    'SELECT liquor_type, service_station FROM items WHERE id = ? AND tenant_id = ?',
+    [line.item_id, tenantId],
+  );
+  if (catalog && itemTracksStock(catalog)) {
+    await applyStockDelta(database, tenantId, line.item_id, line.quantity - quantity);
+  }
   if (quantity === 0) {
     await database.runAsync('DELETE FROM order_items WHERE id = ? AND order_id = ?', [lineId, orderId]);
     return;
@@ -676,6 +742,13 @@ function mapLine(row: LineRow): OrderLine {
     quantity: Number(row.quantity),
     unitPrice: Number(row.unit_price),
   };
+}
+
+function itemTracksStock(item: { liquor_type: string; service_station: string }): boolean {
+  return tracksStock({
+    liquorType: item.liquor_type,
+    serviceStation: item.service_station,
+  });
 }
 
 async function touchOrder(database: SQLiteDatabase, orderId: string): Promise<void> {

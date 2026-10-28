@@ -16,10 +16,11 @@ import { useTranslation } from 'react-i18next';
 
 import { displayBillNumber, lineTotalPaise } from '../domain/billing';
 import type { OrderErrorCode } from '../domain/errors';
-import { formatInr } from '../domain/money';
+import { formatInr, parseQuantity, sanitizeQuantityInput } from '../domain/money';
 import {
   filterOrderCatalog,
   itemNames,
+  tracksStock,
   volumeMessage,
   type OrderCatalogSection,
   type StockItem,
@@ -37,6 +38,8 @@ import { afterModalDismissed } from '../printing/receiptFile';
 import { useTheme } from '../theme/theme-context';
 import { ActionRow } from './FormActions';
 import { PaymentSheet } from './PaymentSheet';
+import { QuantityNumpadSheet } from './QuantityNumpadSheet';
+import { RemoveQuantitySheet } from './RemoveQuantitySheet';
 import { ScreenWrapper } from './ScreenWrapper';
 import { ThermalReceipt } from './ThermalReceipt';
 
@@ -60,6 +63,10 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
   const [focusLineId, setFocusLineId] = useState<string | null>(null);
   const [requestBusyId, setRequestBusyId] = useState<string | null>(null);
   const [addingItemId, setAddingItemId] = useState<string | null>(null);
+  const [editingLine, setEditingLine] = useState<OrderLine | null>(null);
+  const [removingLine, setRemovingLine] = useState<{ line: OrderLine; available: number } | null>(
+    null,
+  );
   const order = cart.order;
   const editable = order?.status === 'OPEN';
   const searching = query.trim().length > 0;
@@ -73,6 +80,15 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
     setFormError(null);
   }, i18n.language);
 
+  // Tab badges: full section totals, or match counts while searching.
+  const sectionCounts = useMemo(
+    () => ({
+      bar: filterOrderCatalog(cart.items, 'bar', query).length,
+      kitchen: filterOrderCatalog(cart.items, 'kitchen', query).length,
+    }),
+    [cart.items, query],
+  );
+
   const searchResults = useMemo(
     () => (searching ? filterOrderCatalog(cart.items, section, query) : []),
     [cart.items, query, searching, section],
@@ -85,6 +101,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
   const serveCount = order?.itemCount ?? 0;
   const runningTotal = order?.totalAmount ?? 0;
   const searchMatches = searching ? searchResults.slice(0, 8) : [];
+  const editingVolume = editingLine ? volumeMessage(editingLine) : null;
 
   const pulseLine = useCallback((lineId: string) => {
     setFocusLineId(lineId);
@@ -98,11 +115,15 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
   }, []);
 
   const onPickCatalogItem = useCallback(
-    (item: StockItem) => {
+    (item: StockItem, quantity = 1) => {
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 9999) {
+        setFormError('quantity');
+        return;
+      }
       setFormError(null);
       setAddingItemId(item.id);
       void cart
-        .addItem(item.id, 1)
+        .addItem(item.id, quantity)
         .then((next) => {
           if (!next) {
             return;
@@ -122,9 +143,54 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
     [cart, pulseLine, searching],
   );
 
+  const unitsOnOrder = useCallback(
+    (itemId: string) =>
+      (order?.lines ?? [])
+        .filter((entry) => entry.itemId === itemId)
+        .reduce((sum, entry) => sum + entry.quantity, 0),
+    [order?.lines],
+  );
+
+  const onEditLineQuantity = useCallback(
+    (quantity: number) => {
+      if (!editingLine) {
+        return;
+      }
+      const lineId = editingLine.id;
+      setEditingLine(null);
+      setFormError(null);
+      void cart.setQuantity(lineId, quantity).then((next) => {
+        if (!next) {
+          return;
+        }
+        requestAnimationFrame(() => pulseLine(lineId));
+      });
+    },
+    [cart, editingLine, pulseLine],
+  );
+
+  const onConfirmRemoveUnits = useCallback(
+    (quantity: number) => {
+      if (!removingLine) {
+        return;
+      }
+      const { line } = removingLine;
+      setRemovingLine(null);
+      setFormError(null);
+      void cart.removeUnits(line.itemId, quantity, line.id);
+    },
+    [cart, removingLine],
+  );
+
   const onRemoveLine = useCallback(
     (line: OrderLine) => {
       setFormError(null);
+      const available = unitsOnOrder(line.itemId);
+      if (available > 1) {
+        setRemovingLine({ line, available });
+        return;
+      }
+
       const names = itemNames(line, i18n.language);
       const title = t('billing.removeLineTitle');
       const body = t('billing.removeLineBody', { name: names.primary });
@@ -145,7 +211,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
         { text: t('billing.removeLine'), style: 'destructive', onPress: remove },
       ]);
     },
-    [cart, i18n.language, t],
+    [cart, i18n.language, t, unitsOnOrder],
   );
 
   const onCancel = useCallback(() => {
@@ -370,6 +436,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                   <View className="flex-row rounded-lg border border-line bg-surface p-1">
                     {(['bar', 'kitchen'] as const).map((tab) => {
                       const active = section === tab;
+                      const count = tab === 'bar' ? sectionCounts.bar : sectionCounts.kitchen;
                       return (
                         <Pressable
                           key={tab}
@@ -382,7 +449,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                             className={`text-sm font-semibold ${active ? 'text-accent-ink' : 'text-muted'}`}
                             numberOfLines={1}
                           >
-                            {t(tab === 'bar' ? 'billing.barItems' : 'billing.kitchenItems')}
+                            {t(tab === 'bar' ? 'billing.barItems' : 'billing.kitchenItems')} ({count})
                           </Text>
                         </Pressable>
                       );
@@ -454,7 +521,8 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                               busy={busy}
                               adding={addingItemId === item.id}
                               showDivider={index < searchMatches.length - 1}
-                              onAdd={() => onPickCatalogItem(item)}
+                              onAdd={(quantity) => onPickCatalogItem(item, quantity)}
+                              onQuantityError={() => setFormError('quantity')}
                             />
                           ))
                         )}
@@ -512,6 +580,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                   focusLineId={focusLineId}
                   rowOffsets={rowOffsets}
                   orderSectionOffset={orderSectionOffset}
+                  onEdit={(line) => setEditingLine(line)}
                   onRemove={onRemoveLine}
                   showTopDivider={false}
                 />
@@ -524,6 +593,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                   focusLineId={focusLineId}
                   rowOffsets={rowOffsets}
                   orderSectionOffset={orderSectionOffset}
+                  onEdit={(line) => setEditingLine(line)}
                   onRemove={onRemoveLine}
                   showTopDivider={barLines.length > 0 && kitchenLines.length > 0}
                 />
@@ -631,6 +701,32 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                 await onCollect(payment);
               })();
             }}
+          />
+
+          <QuantityNumpadSheet
+            visible={editingLine !== null}
+            title={
+              editingLine
+                ? `${editingLine.itemCode} · ${itemNames(editingLine, i18n.language).primary}`
+                : ''
+            }
+            subtitle={editingVolume ? t(editingVolume.key, editingVolume.values) : undefined}
+            initialQuantity={editingLine?.quantity ?? 1}
+            confirmLabel={t('billing.quantityUpdate')}
+            onClose={() => setEditingLine(null)}
+            onConfirm={onEditLineQuantity}
+          />
+
+          <RemoveQuantitySheet
+            visible={removingLine !== null}
+            title={
+              removingLine
+                ? `${removingLine.line.itemCode} · ${itemNames(removingLine.line, i18n.language).primary}`
+                : ''
+            }
+            available={removingLine?.available ?? 1}
+            onClose={() => setRemovingLine(null)}
+            onConfirm={onConfirmRemoveUnits}
           />
         </View>
       )}
@@ -765,6 +861,7 @@ function OrderStationBlock({
   focusLineId,
   rowOffsets,
   orderSectionOffset,
+  onEdit,
   onRemove,
   showTopDivider,
 }: {
@@ -776,6 +873,7 @@ function OrderStationBlock({
   focusLineId: string | null;
   rowOffsets: MutableRefObject<Record<string, number>>;
   orderSectionOffset: MutableRefObject<number>;
+  onEdit: (line: OrderLine) => void;
   onRemove: (line: OrderLine) => void;
   showTopDivider: boolean;
 }) {
@@ -801,6 +899,7 @@ function OrderStationBlock({
             busy={busy}
             focused={focusLineId === line.id}
             showDivider={index < lines.length - 1}
+            onEdit={() => onEdit(line)}
             onRemove={() => onRemove(line)}
           />
         </View>
@@ -816,6 +915,7 @@ function CompactOrderRow({
   busy,
   focused,
   showDivider,
+  onEdit,
   onRemove,
 }: {
   line: OrderLine;
@@ -824,6 +924,7 @@ function CompactOrderRow({
   busy: boolean;
   focused: boolean;
   showDivider: boolean;
+  onEdit: () => void;
   onRemove: () => void;
 }) {
   const { t } = useTranslation();
@@ -857,16 +958,24 @@ function CompactOrderRow({
         className="absolute inset-0"
       />
       <View className="flex-row items-center gap-2">
-        <View className="min-w-0 flex-1 pr-1">
-          <Text className="text-sm font-bold text-ink" numberOfLines={1}>
-            {line.itemCode} • {names.primary}
-          </Text>
-          <Text className="text-xs text-muted" numberOfLines={1}>
-            {t(volume.key, volume.values)}
-            {line.quantity > 1 ? ` · ×${line.quantity}` : ''}
-          </Text>
-        </View>
-        <Text className="min-w-[72px] text-right text-sm font-bold text-ink">{formatInr(lineTotal)}</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t('billing.quantityEdit')}
+          disabled={!editable || busy}
+          onPress={onEdit}
+          className="min-w-0 flex-1 flex-row items-center gap-2 pr-1 disabled:opacity-100"
+        >
+          <View className="min-w-0 flex-1">
+            <Text className="text-sm font-bold text-ink" numberOfLines={1}>
+              {line.itemCode} • {names.primary}
+            </Text>
+            <Text className="text-xs text-muted" numberOfLines={1}>
+              {t(volume.key, volume.values)}
+              {line.quantity > 1 ? ` · ×${line.quantity}` : ''}
+            </Text>
+          </View>
+          <Text className="min-w-[72px] text-right text-sm font-bold text-ink">{formatInr(lineTotal)}</Text>
+        </Pressable>
         {editable ? (
           <Pressable
             accessibilityRole="button"
@@ -891,35 +1000,71 @@ function SearchMatchRow({
   adding,
   showDivider,
   onAdd,
+  onQuantityError,
 }: {
   item: StockItem;
   language: string;
   busy: boolean;
   adding: boolean;
   showDivider: boolean;
-  onAdd: () => void;
+  onAdd: (quantity: number) => void;
+  onQuantityError: () => void;
 }) {
   const { t } = useTranslation();
+  const { palette } = useTheme();
+  const [qtyInput, setQtyInput] = useState('1');
   const names = itemNames(item, language);
   const volume = volumeMessage(item);
-  const out = item.currentStock <= 0;
+  const out = tracksStock(item) && item.currentStock <= 0;
+
+  const submitAdd = () => {
+    const trimmed = qtyInput.trim();
+    const quantity = trimmed === '' ? 1 : parseQuantity(trimmed);
+    if (quantity === null) {
+      onQuantityError();
+      return;
+    }
+    onAdd(quantity);
+  };
 
   return (
     <View className={`flex-row items-center gap-2 px-3 py-2 ${showDivider ? 'border-b border-line' : ''}`}>
       <View className="min-w-0 flex-1">
         <Text className="text-sm font-bold text-ink" numberOfLines={1}>
-          #{item.serialNo} · {item.itemCode} · {names.primary}
+          #{item.serialNo} · {names.primary}
         </Text>
         <Text className="text-xs text-muted" numberOfLines={1}>
           {t(volume.key, volume.values)} · {formatInr(item.sellingPrice)}
-          {out ? ` · ${t('billing.out')}` : ''}
         </Text>
+      </View>
+      <View className="h-9 w-14 justify-center rounded-md border border-line bg-canvas px-1.5">
+        <TextInput
+          value={qtyInput}
+          onChangeText={(value) => setQtyInput(sanitizeQuantityInput(value))}
+          onBlur={() => {
+            if (qtyInput.trim() === '') {
+              setQtyInput('1');
+            }
+          }}
+          onSubmitEditing={submitAdd}
+          editable={!busy && !out}
+          keyboardType="number-pad"
+          selectTextOnFocus
+          maxLength={4}
+          returnKeyType="done"
+          accessibilityLabel={t('billing.quantity')}
+          placeholder="1"
+          placeholderTextColor={palette.muted}
+          className="h-9 w-full py-0 text-center text-sm font-bold text-ink"
+          style={{ margin: 0, padding: 0 }}
+        />
       </View>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={t('billing.add')}
+        accessibilityLabel={out ? t('billing.out') : t('billing.add')}
+        accessibilityState={{ disabled: busy || out }}
         disabled={busy || out}
-        onPress={onAdd}
+        onPress={submitAdd}
         className={`h-9 min-w-[64px] items-center justify-center rounded-md bg-accent px-3 ${
           out || adding ? 'opacity-50' : ''
         }`}

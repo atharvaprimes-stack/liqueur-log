@@ -111,8 +111,14 @@ export async function loadDashboard(tenantId: string): Promise<DashboardSnapshot
     const stock = await database.getFirstAsync<StockRow>(
       `SELECT
          COUNT(*) AS item_count,
-         COALESCE(SUM(CASE WHEN current_stock > 0 AND current_stock <= low_stock_threshold THEN 1 ELSE 0 END), 0) AS low_count,
-         COALESCE(SUM(CASE WHEN current_stock = 0 THEN 1 ELSE 0 END), 0) AS out_count
+         COALESCE(SUM(CASE
+           WHEN service_station <> 'kitchen'
+            AND current_stock > 0
+            AND current_stock <= low_stock_threshold
+           THEN 1 ELSE 0 END), 0) AS low_count,
+         COALESCE(SUM(CASE
+           WHEN service_station <> 'kitchen' AND current_stock = 0
+           THEN 1 ELSE 0 END), 0) AS out_count
        FROM items
        WHERE tenant_id = ?`,
       [tenantId],

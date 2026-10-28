@@ -59,9 +59,6 @@ function paint(
   const sections = groupReceiptLinesByStation(receipt.lines);
   paintSection(page, font, copy.bar, sections.bar, copy.pcs, width, cursor);
   paintSection(page, font, copy.kitchen, sections.kitchen, copy.pcs, width, cursor);
-  rule(page, font, '-', width, cursor);
-  row(page, font, copy.subtotal.toLocaleUpperCase(), formatReceiptAmount(receipt.subtotal), 9, width, cursor, 1);
-  row(page, font, copy.roundOff.toLocaleUpperCase(), formatReceiptAmount(receipt.roundOff), 9, width, cursor, 1);
   rule(page, font, '=', width, cursor);
   row(page, font, copy.total.toLocaleUpperCase(), formatReceiptAmount(receipt.totalAmount), 12, width, cursor, 2);
   if (receipt.isCredit) {

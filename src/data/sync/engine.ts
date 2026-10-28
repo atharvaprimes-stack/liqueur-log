@@ -56,7 +56,11 @@ export function syncNow(): Promise<void> {
 
 async function runSync(): Promise<void> {
   const credentials = getSessionCredentials();
-  if (!credentials || !isSupabaseConfigured() || !(await isDeviceOnline())) {
+  if (!credentials) {
+    console.warn('[sync] skipped: no session credentials (re-login required)');
+    return;
+  }
+  if (!isSupabaseConfigured() || !(await isDeviceOnline())) {
     return;
   }
 
