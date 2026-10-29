@@ -55,7 +55,13 @@ export async function pushPendingUsers(): Promise<boolean> {
   }
 
   for (const row of rows) {
-    const record = JSON.parse(row.payload) as StaffRecord;
+    let record: StaffRecord;
+    try {
+      record = JSON.parse(row.payload) as StaffRecord;
+    } catch {
+      await database.runAsync('DELETE FROM sync_queue WHERE id = ?', [row.id]);
+      continue;
+    }
     const { data, error } = await supabase.rpc('sync_staff_member', {
       p_admin_mobile: credentials.mobileNumber,
       p_admin_mpin: credentials.mpin,

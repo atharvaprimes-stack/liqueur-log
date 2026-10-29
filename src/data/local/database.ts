@@ -134,6 +134,7 @@ async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
     'ALTER TABLE tenants ADD COLUMN table_count INTEGER NOT NULL DEFAULT 10',
   );
   await relaxItemTypeChecks(database);
+  await dropItemCodeColumns(database);
   await relaxPurchasePaymentTypes(database);
   await ensureSyncColumns(database);
   // After any items-table rebuilds: add + backfill serial numbers.
@@ -154,7 +155,7 @@ async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
  * this clears them. Bump LEDGER_EPOCH when you need devices to wipe again.
  */
 const LEDGER_EPOCH_KEY = 'ledger_epoch';
-const LEDGER_EPOCH = '2026-10-20-server-reset';
+const LEDGER_EPOCH = '2026-10-29-excel-price-stock';
 
 /**
  * Clears stale local ledger rows once after a server reset. Safe to call often.
@@ -303,17 +304,20 @@ async function ensureItemSerialNumbers(database: SQLite.SQLiteDatabase): Promise
       'SELECT DISTINCT tenant_id FROM items',
     );
     for (const tenant of tenants) {
-      const rows = await database.getAllAsync<{ id: string }>(
-        `SELECT id FROM items
-         WHERE tenant_id = ?
-         ORDER BY item_code COLLATE NOCASE ASC, id ASC`,
+      const maxRow = await database.getFirstAsync<{ max_serial: number }>(
+        'SELECT COALESCE(MAX(serial_no), 0) AS max_serial FROM items WHERE tenant_id = ?',
         [tenant.tenant_id],
       );
-      for (let index = 0; index < rows.length; index += 1) {
-        await database.runAsync('UPDATE items SET serial_no = ? WHERE id = ?', [
-          index + 1,
-          rows[index].id,
-        ]);
+      let next = Number(maxRow?.max_serial ?? 0);
+      const rows = await database.getAllAsync<{ id: string }>(
+        `SELECT id FROM items
+         WHERE tenant_id = ? AND serial_no <= 0
+         ORDER BY id ASC`,
+        [tenant.tenant_id],
+      );
+      for (const row of rows) {
+        next += 1;
+        await database.runAsync('UPDATE items SET serial_no = ? WHERE id = ?', [next, row.id]);
       }
     }
   }
@@ -393,6 +397,15 @@ async function ensureStationVisibility(database: SQLite.SQLiteDatabase): Promise
          tracks_stock = CASE WHEN service_station = 'kitchen' THEN 0 ELSE 1 END`,
     );
   }
+
+  // Collapse any legacy dual-visibility rows to exclusive prep station (never delete items).
+  await database.runAsync(
+    `UPDATE items
+     SET
+       show_in_bar = CASE WHEN service_station = 'kitchen' THEN 0 ELSE 1 END,
+       show_in_kitchen = CASE WHEN service_station = 'kitchen' THEN 1 ELSE 0 END
+     WHERE show_in_bar = 1 AND show_in_kitchen = 1`,
+  );
 }
 
 async function hasTableColumn(
@@ -445,7 +458,6 @@ async function relaxItemTypeChecks(database: SQLite.SQLiteDatabase): Promise<voi
         id TEXT PRIMARY KEY NOT NULL,
         tenant_id TEXT NOT NULL,
         serial_no INTEGER NOT NULL DEFAULT 0,
-        item_code TEXT NOT NULL,
         name_en TEXT NOT NULL,
         name_mr TEXT NOT NULL,
         brand TEXT NOT NULL,
@@ -460,20 +472,29 @@ async function relaxItemTypeChecks(database: SQLite.SQLiteDatabase): Promise<voi
         FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE
       );
       INSERT INTO items_next (
-        id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
+        id, tenant_id, serial_no, name_en, name_mr, brand, liquor_type, sub_type,
         volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
       )
       SELECT
-        id, tenant_id, 0, item_code, name_en, name_mr, brand, liquor_type, sub_type,
+        id, tenant_id, 0, name_en, name_mr, brand, liquor_type, sub_type,
         volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, 0
       FROM items;
       DROP TABLE items;
       ALTER TABLE items_next RENAME TO items;
-      CREATE UNIQUE INDEX IF NOT EXISTS items_tenant_item_code_idx
-        ON items (tenant_id, item_code);
     `);
   } finally {
     await database.execAsync('PRAGMA foreign_keys = ON');
+  }
+}
+
+/** Existing DBs carry a NOT NULL item_code (and unique index); new writes no longer supply it. */
+async function dropItemCodeColumns(database: SQLite.SQLiteDatabase): Promise<void> {
+  await database.execAsync('DROP INDEX IF EXISTS items_tenant_item_code_idx');
+  if (await hasTableColumn(database, 'items', 'item_code')) {
+    await database.runAsync('ALTER TABLE items DROP COLUMN item_code');
+  }
+  if (await hasTableColumn(database, 'order_items', 'item_code')) {
+    await database.runAsync('ALTER TABLE order_items DROP COLUMN item_code');
   }
 }
 

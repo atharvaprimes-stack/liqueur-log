@@ -7,6 +7,7 @@ import {
   parseCatalogTerm,
   parseVendor,
   resolveStationFlags,
+  visibilityFlagsForStation,
   suggestNextInvoiceNumber,
   type CatalogItemInput,
   type CatalogTerm,
@@ -24,7 +25,6 @@ type ItemRow = {
   id: string;
   tenant_id: string;
   serial_no: number;
-  item_code: string;
   name_en: string;
   name_mr: string;
   brand: string;
@@ -41,7 +41,7 @@ type ItemRow = {
   low_stock_threshold: number;
 };
 
-const ITEM_COLUMNS = `id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
+const ITEM_COLUMNS = `id, tenant_id, serial_no, name_en, name_mr, brand, liquor_type, sub_type,
   service_station, show_in_bar, show_in_kitchen, tracks_stock,
   volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold`;
 
@@ -104,7 +104,7 @@ export async function adjustItemStock(input: {
       entity: 'items',
       entityId: item.id,
       detail: {
-        itemCode: item.itemCode,
+        serialNo: item.serialNo,
         delta: input.delta,
         currentStock: item.currentStock,
       },
@@ -178,7 +178,7 @@ export async function correctItemStock(input: {
       entity: 'items',
       entityId: item.id,
       detail: {
-        itemCode: item.itemCode,
+        serialNo: item.serialNo,
         previousStock: current.currentStock,
         delta: input.nextStock - current.currentStock,
         currentStock: item.currentStock,
@@ -297,7 +297,10 @@ export async function recordPurchase(
 
         const updated = await database.runAsync(
           `UPDATE items
-           SET current_stock = current_stock + ?,
+           SET current_stock = CASE
+                 WHEN tracks_stock = 1 THEN current_stock + ?
+                 ELSE current_stock
+               END,
                purchase_price = ?,
                updated_at = ?
            WHERE id = ? AND tenant_id = ?`,
@@ -511,25 +514,25 @@ export async function createCatalogItem(input: {
         [input.tenantId],
       );
       const serialNo = (maxSerial?.serial_no ?? 0) + 1;
+      const visibility = visibilityFlagsForStation(draft.serviceStation);
       await database.runAsync(
         `INSERT INTO items (
-           id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
+           id, tenant_id, serial_no, name_en, name_mr, brand, liquor_type, sub_type,
            service_station, show_in_bar, show_in_kitchen, tracks_stock,
            volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           itemId,
           input.tenantId,
           serialNo,
-          draft.itemCode,
           draft.nameEn,
           draft.nameMr,
           draft.brand,
           liquorType,
           subType,
           draft.serviceStation,
-          draft.showInBar ? 1 : 0,
-          draft.showInKitchen ? 1 : 0,
+          visibility.showInBar ? 1 : 0,
+          visibility.showInKitchen ? 1 : 0,
           draft.tracksStock ? 1 : 0,
           draft.volumeMl,
           draft.purchasePrice,
@@ -546,7 +549,7 @@ export async function createCatalogItem(input: {
         action: 'catalog.create',
         entity: 'items',
         entityId: itemId,
-        detail: { itemCode: draft.itemCode, initialStock: draft.initialStock },
+        detail: { serialNo, initialStock: draft.initialStock },
       });
       if (draft.initialStock > 0) {
         const adjustId = await insertActivity(database, {
@@ -556,7 +559,7 @@ export async function createCatalogItem(input: {
           entity: 'items',
           entityId: itemId,
           detail: {
-            itemCode: draft.itemCode,
+            serialNo,
             previousStock: 0,
             delta: draft.initialStock,
             currentStock: draft.initialStock,
@@ -589,23 +592,23 @@ export async function updateCatalogItem(input: {
       await assertAdmin(database, input.tenantId, input.actorId);
       const liquorType = await canonicalTerm(database, input.tenantId, 'type', draft.liquorType);
       const subType = await canonicalTerm(database, input.tenantId, 'strength', draft.subType);
+      const visibility = visibilityFlagsForStation(draft.serviceStation);
       const updated = await database.runAsync(
         `UPDATE items
-         SET item_code = ?, name_en = ?, name_mr = ?, brand = ?, liquor_type = ?, sub_type = ?,
+         SET name_en = ?, name_mr = ?, brand = ?, liquor_type = ?, sub_type = ?,
              service_station = ?, show_in_bar = ?, show_in_kitchen = ?, tracks_stock = ?,
              volume_ml = ?, purchase_price = ?, selling_price = ?,
              low_stock_threshold = ?, updated_at = ?
          WHERE id = ? AND tenant_id = ?`,
         [
-          draft.itemCode,
           draft.nameEn,
           draft.nameMr,
           draft.brand,
           liquorType,
           subType,
           draft.serviceStation,
-          draft.showInBar ? 1 : 0,
-          draft.showInKitchen ? 1 : 0,
+          visibility.showInBar ? 1 : 0,
+          visibility.showInKitchen ? 1 : 0,
           draft.tracksStock ? 1 : 0,
           draft.volumeMl,
           draft.purchasePrice,
@@ -625,7 +628,7 @@ export async function updateCatalogItem(input: {
         action: 'catalog.update',
         entity: 'items',
         entityId: input.itemId,
-        detail: { itemCode: draft.itemCode },
+        detail: { itemId: input.itemId },
       });
       await enqueueUpsert(database, 'items', input.itemId);
     });
@@ -642,8 +645,8 @@ export async function deleteCatalogItem(input: {
 }): Promise<void> {
   await withLockedTransaction(async (database) => {
     await assertAdmin(database, input.tenantId, input.actorId);
-    const item = await database.getFirstAsync<{ item_code: string }>(
-      'SELECT item_code FROM items WHERE id = ? AND tenant_id = ?',
+    const item = await database.getFirstAsync<{ serial_no: number }>(
+      'SELECT serial_no FROM items WHERE id = ? AND tenant_id = ?',
       [input.itemId, input.tenantId],
     );
     if (!item) {
@@ -668,7 +671,7 @@ export async function deleteCatalogItem(input: {
       action: 'catalog.delete',
       entity: 'items',
       entityId: input.itemId,
-      detail: { itemCode: item.item_code },
+      detail: { serialNo: item.serial_no },
     });
   });
   requestSync();
@@ -767,9 +770,6 @@ export async function deleteVendor(input: { tenantId: string; actorId: string; v
 function mapCatalogWriteError(error: unknown): Error {
   if (error instanceof InventoryValidationError || error instanceof InventoryAccessError) {
     return error;
-  }
-  if (isUniqueConstraintError(error)) {
-    return new InventoryValidationError('duplicate-code');
   }
   return error instanceof Error ? error : new InventoryValidationError('unknown');
 }
@@ -911,8 +911,6 @@ function mapItem(row: ItemRow): StockItem | null {
   }
 
   const stations = resolveStationFlags({
-    show_in_bar: row.show_in_bar,
-    show_in_kitchen: row.show_in_kitchen,
     tracks_stock: row.tracks_stock,
     service_station: row.service_station,
     liquor_type: row.liquor_type,
@@ -922,15 +920,12 @@ function mapItem(row: ItemRow): StockItem | null {
     id: row.id,
     tenantId: row.tenant_id,
     serialNo,
-    itemCode: row.item_code,
     nameEn: row.name_en,
     nameMr: row.name_mr,
     brand: row.brand,
     liquorType: row.liquor_type,
     subType: row.sub_type,
     serviceStation: stations.serviceStation,
-    showInBar: stations.showInBar,
-    showInKitchen: stations.showInKitchen,
     tracksStock: stations.tracksStock,
     volumeMl,
     purchasePrice: Math.round(purchasePrice * 100) / 100,

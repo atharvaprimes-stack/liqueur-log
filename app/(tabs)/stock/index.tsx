@@ -19,6 +19,7 @@ import {
   filterByStockStatus,
   filterOrderSection,
   filterStockEntrySearch,
+  isKitchenItem,
   isLowStock,
   isOutOfStock,
   itemNames,
@@ -53,11 +54,10 @@ export default function StockScreen() {
     let bar = 0;
     let kitchen = 0;
     for (const item of items) {
-      if (item.showInBar) {
-        bar += 1;
-      }
-      if (item.showInKitchen) {
+      if (isKitchenItem(item)) {
         kitchen += 1;
+      } else {
+        bar += 1;
       }
     }
     return { bar, kitchen };
@@ -132,7 +132,7 @@ export default function StockScreen() {
         {items.length > 0 || isLoading ? (
           <View className="pb-3 pt-3">
             <View className="mx-4 flex-row rounded-lg border border-line bg-surface p-1">
-              {(['bar', 'kitchen'] as const).map((tab) => {
+              {(['kitchen', 'bar'] as const).map((tab) => {
                 const active = section === tab;
                 const count = tab === 'bar' ? sectionCounts.bar : sectionCounts.kitchen;
                 return (
@@ -361,7 +361,7 @@ function StockRow({
   const devanagari = language.startsWith('mr');
   const name = itemNames(item, language).primary;
   const volume = compactVolume(item);
-  const detail = `#${item.serialNo} · ${item.itemCode} · ${t(volume.key, volume.values)}`;
+  const detail = `#${item.serialNo} · ${t(volume.key, volume.values)}`;
   const stocked = tracksStock(item);
   const low = stocked && isLowStock(item);
   let status = '';

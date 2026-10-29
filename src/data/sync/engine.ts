@@ -33,6 +33,7 @@ const CATALOG_ENTITIES = ['item_types', 'item_strengths', 'vendors', 'items'] as
 
 let flushing: Promise<void> | null = null;
 let pendingFull = false;
+let pendingPush = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let peerNudgeTimer: ReturnType<typeof setTimeout> | null = null;
 let lastFullSyncAt = 0;
@@ -55,7 +56,7 @@ export function requestSync(): void {
   clearSyncTimer();
   timer = setTimeout(() => {
     timer = null;
-    void pushNow();
+    void pushNow().catch(() => undefined);
   }, RETRY_DELAY_MS);
 }
 
@@ -68,7 +69,6 @@ export function pushNow(): Promise<void> {
 /** Pushes local changes, then pulls the tenant snapshot. Safe to call repeatedly. */
 export function syncNow(): Promise<void> {
   clearSyncTimer();
-  lastFullSyncAt = Date.now();
   return enqueueSync('full');
 }
 
@@ -114,18 +114,21 @@ export function syncAfterPeerNudge(): void {
 function enqueueSync(mode: 'push' | 'full'): Promise<void> {
   if (mode === 'full') {
     pendingFull = true;
+  } else {
+    pendingPush = true;
   }
   if (!flushing) {
     flushing = (async () => {
       for (;;) {
         const doFull = pendingFull;
         pendingFull = false;
+        pendingPush = false;
         if (doFull) {
           await runSync();
         } else {
           await runPush();
         }
-        if (!pendingFull) {
+        if (!pendingFull && !pendingPush) {
           break;
         }
       }
@@ -238,10 +241,13 @@ async function pullTenant(mobileNumber: string, mpin: string, tenantId: string):
   if (!snapshot) {
     return 0;
   }
-  return withLockedTransaction(async (database) => {
+  const requeued = await withLockedTransaction(async (database) => {
     await applySnapshot(database, tenantId, snapshot);
     return requeueCatalogMissingFromRemote(database, tenantId, snapshot);
   });
+  // Stamp cooldown only after a successful snapshot apply, not when sync is scheduled.
+  lastFullSyncAt = Date.now();
+  return requeued;
 }
 
 /**
@@ -402,7 +408,7 @@ async function readRecord(
       return null;
     }
     order.lines = await database.getAllAsync(
-      `SELECT id, order_id, item_id, item_code, name_en, name_mr, liquor_type, service_station,
+      `SELECT id, order_id, item_id, name_en, name_mr, liquor_type, service_station,
               volume_ml, quantity, unit_price
        FROM order_items WHERE order_id = ?`,
       [entityId],
@@ -411,7 +417,7 @@ async function readRecord(
   }
 
   const tables: Record<string, string> = {
-    items: `SELECT id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
+    items: `SELECT id, tenant_id, serial_no, name_en, name_mr, brand, liquor_type, sub_type,
               service_station, show_in_bar, show_in_kitchen, tracks_stock,
               volume_ml, purchase_price, selling_price, low_stock_threshold, updated_at
        FROM items WHERE id = ? AND tenant_id = ?`,

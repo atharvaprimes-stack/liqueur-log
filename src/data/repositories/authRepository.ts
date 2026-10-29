@@ -143,10 +143,10 @@ export async function restoreSession(): Promise<AuthSession | null> {
 }
 
 export async function clearSession(): Promise<void> {
-  clearSessionCredentials();
-  setSessionInteractionAt(0);
   const database = await getDatabase();
   await database.runAsync('DELETE FROM sessions');
+  clearSessionCredentials();
+  setSessionInteractionAt(0);
 }
 
 export async function recordInteraction(at: number): Promise<void> {
@@ -333,7 +333,7 @@ export async function updateOwnAccount(input: {
     input.user.tenantId,
   ]);
 
-  if (input.user.role === 'ADMIN' && newMpin) {
+  if (newMpin) {
     setSessionCredentials({ mobileNumber: input.user.mobileNumber, mpin: newMpin });
   }
 

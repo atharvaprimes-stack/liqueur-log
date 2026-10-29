@@ -34,7 +34,6 @@ export function useOrderCart(target: CartTarget): {
   clearError: () => void;
   reload: () => Promise<void>;
   remember: (order: SaleOrder) => void;
-  addByCode: (itemCode: string, quantity: number, serviceStation?: ServiceStation) => Promise<SaleOrder | null>;
   addItem: (itemId: string, quantity: number, serviceStation?: ServiceStation) => Promise<SaleOrder | null>;
   setQuantity: (lineId: string, quantity: number) => Promise<SaleOrder | null>;
   removeUnits: (itemId: string, quantity: number, preferLineId?: string) => Promise<SaleOrder | null>;
@@ -204,12 +203,6 @@ export function useOrderCart(target: CartTarget): {
     [requireOpen, runWrite],
   );
 
-  const addByCode = useCallback(
-    async (itemCode: string, quantity: number, serviceStation?: ServiceStation) =>
-      guardWrite((actor) => addOrderItem({ ...actor, itemCode, quantity, serviceStation })),
-    [guardWrite],
-  );
-
   const addItem = useCallback(
     async (itemId: string, quantity: number, serviceStation?: ServiceStation) =>
       guardWrite((actor) => addOrderItem({ ...actor, itemId, quantity, serviceStation })),
@@ -265,7 +258,6 @@ export function useOrderCart(target: CartTarget): {
     clearError: () => setErrorCode(null),
     reload,
     remember,
-    addByCode,
     addItem,
     setQuantity,
     removeUnits,

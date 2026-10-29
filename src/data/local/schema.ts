@@ -68,7 +68,6 @@ CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY NOT NULL,
   tenant_id TEXT NOT NULL,
   serial_no INTEGER NOT NULL DEFAULT 0 CHECK (serial_no >= 0),
-  item_code TEXT NOT NULL,
   name_en TEXT NOT NULL,
   name_mr TEXT NOT NULL,
   brand TEXT NOT NULL,
@@ -87,9 +86,6 @@ CREATE TABLE IF NOT EXISTS items (
   CHECK (show_in_bar + show_in_kitchen >= 1),
   FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS items_tenant_item_code_idx
-  ON items (tenant_id, item_code);
 
 CREATE TABLE IF NOT EXISTS item_types (
   id TEXT PRIMARY KEY NOT NULL,
@@ -293,7 +289,6 @@ CREATE TABLE IF NOT EXISTS order_items (
   id TEXT PRIMARY KEY NOT NULL,
   order_id TEXT NOT NULL,
   item_id TEXT NOT NULL,
-  item_code TEXT NOT NULL,
   name_en TEXT NOT NULL,
   name_mr TEXT NOT NULL,
   liquor_type TEXT NOT NULL,

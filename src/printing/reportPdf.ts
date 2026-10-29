@@ -66,11 +66,20 @@ function paintHeader(painter: Painter): void {
   if (sheet.licenseLine) {
     center(painter, sheet.licenseLine, 8, MUTED, 1);
   }
-  painter.y -= 8;
-  center(painter, sheet.title, 13, INK, 2);
-  center(painter, sheet.period, 11, INK, 2);
-  center(painter, sheet.generated, 8, MUTED, 0);
-  painter.y -= 12;
+  const hasMeta = Boolean(sheet.title || sheet.period || sheet.generated);
+  if (hasMeta) {
+    painter.y -= 8;
+    if (sheet.title) {
+      center(painter, sheet.title, 13, INK, 2);
+    }
+    if (sheet.period) {
+      center(painter, sheet.period, 11, INK, 2);
+    }
+    if (sheet.generated) {
+      center(painter, sheet.generated, 8, MUTED, 0);
+    }
+  }
+  painter.y -= hasMeta ? 12 : 10;
 }
 
 function paintSummary(painter: Painter): void {
@@ -139,98 +148,242 @@ function paintTable(painter: Painter, table: SheetTable): void {
     return;
   }
 
+  const scale = tableTypeScale(table);
   painter.y -= 4;
   const first = table.groups[0];
   if (first) {
-    ensure(painter, 18 + groupLead(painter, first));
+    ensure(painter, 18 * scale + groupLead(painter, first, scale));
   }
   const sectionFirst = Boolean(table.sectionPerGroup);
-  if (!sectionFirst) {
-    paintColumns(painter, table.columns);
+  const needsLeadingColumns =
+    !sectionFirst || table.groups.every((group) => !group.title.trim());
+  if (needsLeadingColumns) {
+    paintColumns(painter, table.columns, scale);
   }
   for (const group of table.groups) {
-    paintGroup(painter, table.columns, group, sectionFirst);
+    paintGroup(painter, table.columns, group, sectionFirst, scale);
   }
   if (table.extra) {
-    ensure(painter, 16, () => paintColumns(painter, table.columns));
-    paintCells(painter, table.columns, table.extra, 16, 8, false);
+    ensure(painter, 16 * scale, () => paintColumns(painter, table.columns, scale));
+    paintCells(painter, table.columns, table.extra, 16 * scale, 8 * scale, false);
   }
   if (table.grand) {
-    ensure(painter, 18, () => paintColumns(painter, table.columns));
-    paintCells(painter, table.columns, table.grand, 18, 9, true);
+    ensure(painter, 18 * scale, () => paintColumns(painter, table.columns, scale));
+    paintCells(painter, table.columns, table.grand, 18 * scale, 9 * scale, true);
   }
 }
 
-const FLOW_ROW = 16;
-const FLOW_HEADER = 18;
+function tableTypeScale(table: SheetTable): number {
+  return Math.max(1, table.typeScale ?? 1);
+}
+
 const FLOW_GAP = 10;
 
-/** Fill left column top→bottom, then right column; equal-width strips on A4. */
+type FlowMetrics = {
+  row: number;
+  header: number;
+  headerSize: number;
+  itemSize: number;
+  bandSize: number;
+  bandHeight: number;
+};
+
+function flowMetrics(table: SheetTable): FlowMetrics {
+  const scale = tableTypeScale(table);
+  return {
+    row: 16 * scale,
+    header: 18 * scale,
+    headerSize: 7.5 * scale,
+    itemSize: 8 * scale,
+    bandSize: 8 * scale,
+    bandHeight: 16 * scale,
+  };
+}
+
+/** Side-by-side strips on A4. Default fill is row-wise (left→right, then next line). */
 function paintFlowTable(painter: Painter, table: SheetTable): void {
   const flowColumns = Math.max(2, table.flowColumns ?? 2);
+  const fill = table.flowFill ?? 'row';
+  const metrics = flowMetrics(table);
   const strip = table.columns;
   painter.y -= 4;
 
   for (const group of table.groups) {
-    const items = group.bands.flatMap((band) => band.rows);
     if (group.breakBefore) {
       forceNewPage(painter, false);
     }
 
-    const paintChrome = () => {
+    const paintGroupChrome = (continued: boolean) => {
       if (group.title) {
-        paintBand(painter, group.title, 18, BAND, 9, INK, true);
+        const label = continued ? `${group.title} (${painter.sheet.continued})` : group.title;
+        paintBand(painter, label, metrics.bandHeight + 2, BAND, metrics.bandSize + 1, INK, true);
       }
       if (group.note) {
         paintNote(painter, group.note);
       }
-      paintFlowHeaders(painter, strip, flowColumns);
+      paintFlowHeaders(painter, strip, flowColumns, metrics);
     };
 
-    const moved = ensure(painter, 18 + FLOW_HEADER + FLOW_ROW, paintChrome);
-    if (!moved) {
-      paintChrome();
-    }
+    let chromeReady = false;
+    const ensureChrome = () => {
+      if (!chromeReady) {
+        paintGroupChrome(false);
+        chromeReady = true;
+      }
+    };
 
-    let columnIndex = 0;
-    let columnTop = painter.y;
-    let y = painter.y;
-    let lowestY = painter.y;
-
-    for (const item of items) {
-      if (y - FLOW_ROW < FOOTER) {
-        if (columnIndex + 1 < flowColumns) {
-          columnIndex += 1;
-          y = columnTop;
-        } else {
-          forceNewPage(painter, true);
-          paintChrome();
-          columnIndex = 0;
-          columnTop = painter.y;
-          y = painter.y;
-          lowestY = painter.y;
+    for (const band of group.bands) {
+      const ensureBandChrome = () => {
+        ensureChrome();
+        if (band.title) {
+          paintBand(
+            painter,
+            band.title,
+            metrics.bandHeight,
+            rgb(0.975, 0.965, 0.95),
+            metrics.bandSize,
+            INK,
+            false,
+          );
         }
+      };
+
+      const moved = ensure(
+        painter,
+        metrics.bandHeight + metrics.header + metrics.row + (band.title ? metrics.bandHeight : 0),
+        () => {
+          paintGroupChrome(true);
+          if (band.title) {
+            paintBand(
+              painter,
+              band.title,
+              metrics.bandHeight,
+              rgb(0.975, 0.965, 0.95),
+              metrics.bandSize,
+              INK,
+              false,
+            );
+          }
+        },
+      );
+      if (!moved) {
+        ensureBandChrome();
+      } else {
+        chromeReady = true;
       }
 
-      paintFlowItem(painter, strip, flowColumns, columnIndex, y, item);
-      y -= FLOW_ROW;
-      if (y < lowestY) {
-        lowestY = y;
+      if (fill === 'row') {
+        paintFlowRowsRowWise(painter, strip, flowColumns, metrics, band.rows, () => {
+          forceNewPage(painter, true);
+          paintGroupChrome(true);
+          if (band.title) {
+            paintBand(
+              painter,
+              band.title,
+              metrics.bandHeight,
+              rgb(0.975, 0.965, 0.95),
+              metrics.bandSize,
+              INK,
+              false,
+            );
+          }
+        });
+      } else {
+        paintFlowRowsColumnWise(painter, strip, flowColumns, metrics, band.rows, () => {
+          forceNewPage(painter, true);
+          paintGroupChrome(true);
+          if (band.title) {
+            paintBand(
+              painter,
+              band.title,
+              metrics.bandHeight,
+              rgb(0.975, 0.965, 0.95),
+              metrics.bandSize,
+              INK,
+              false,
+            );
+          }
+        });
       }
     }
 
-    painter.y = lowestY - 4;
+    painter.y -= 4;
   }
 }
 
-function paintFlowHeaders(painter: Painter, strip: SheetColumn[], flowColumns: number): void {
+function paintFlowRowsRowWise(
+  painter: Painter,
+  strip: SheetColumn[],
+  flowColumns: number,
+  metrics: FlowMetrics,
+  items: SheetCell[][],
+  onNewPage: () => void,
+): void {
+  for (let index = 0; index < items.length; index += flowColumns) {
+    if (painter.y - metrics.row < FOOTER) {
+      onNewPage();
+    }
+    const top = painter.y;
+    for (let columnIndex = 0; columnIndex < flowColumns; columnIndex += 1) {
+      const item = items[index + columnIndex];
+      if (item) {
+        paintFlowItem(painter, strip, flowColumns, columnIndex, top, item, metrics);
+      }
+    }
+    painter.y = top - metrics.row;
+  }
+}
+
+function paintFlowRowsColumnWise(
+  painter: Painter,
+  strip: SheetColumn[],
+  flowColumns: number,
+  metrics: FlowMetrics,
+  items: SheetCell[][],
+  onNewPage: () => void,
+): void {
+  let columnIndex = 0;
+  let columnTop = painter.y;
+  let y = painter.y;
+  let lowestY = painter.y;
+
+  for (const item of items) {
+    if (y - metrics.row < FOOTER) {
+      if (columnIndex + 1 < flowColumns) {
+        columnIndex += 1;
+        y = columnTop;
+      } else {
+        onNewPage();
+        columnIndex = 0;
+        columnTop = painter.y;
+        y = painter.y;
+        lowestY = painter.y;
+      }
+    }
+
+    paintFlowItem(painter, strip, flowColumns, columnIndex, y, item, metrics);
+    y -= metrics.row;
+    if (y < lowestY) {
+      lowestY = y;
+    }
+  }
+
+  painter.y = lowestY;
+}
+
+function paintFlowHeaders(
+  painter: Painter,
+  strip: SheetColumn[],
+  flowColumns: number,
+  metrics: FlowMetrics,
+): void {
   const top = painter.y;
   const stripWidth = (CONTENT_WIDTH - FLOW_GAP * (flowColumns - 1)) / flowColumns;
   painter.page.drawRectangle({
     x: MARGIN_X,
-    y: top - FLOW_HEADER,
+    y: top - metrics.header,
     width: CONTENT_WIDTH,
-    height: FLOW_HEADER,
+    height: metrics.header,
     color: BAND,
   });
 
@@ -239,12 +392,12 @@ function paintFlowHeaders(painter: Painter, strip: SheetColumn[], flowColumns: n
     let x = originX;
     strip.forEach((column, index) => {
       const width = stripWidth * column.width;
-      const size = 7.5;
-      const baseline = top - (FLOW_HEADER + size) / 2;
+      const size = metrics.headerSize;
+      const baseline = top - (metrics.header + size) / 2;
       if (index > 0) {
         painter.page.drawLine({
           start: { x, y: top },
-          end: { x, y: top - FLOW_HEADER },
+          end: { x, y: top - metrics.header },
           thickness: 0.35,
           color: LINE,
         });
@@ -265,7 +418,7 @@ function paintFlowHeaders(painter: Painter, strip: SheetColumn[], flowColumns: n
       const gutterX = originX - FLOW_GAP / 2;
       painter.page.drawLine({
         start: { x: gutterX, y: top },
-        end: { x: gutterX, y: top - FLOW_HEADER },
+        end: { x: gutterX, y: top - metrics.header },
         thickness: 0.6,
         color: LINE,
       });
@@ -273,12 +426,12 @@ function paintFlowHeaders(painter: Painter, strip: SheetColumn[], flowColumns: n
   }
 
   painter.page.drawLine({
-    start: { x: MARGIN_X, y: top - FLOW_HEADER },
-    end: { x: MARGIN_X + CONTENT_WIDTH, y: top - FLOW_HEADER },
+    start: { x: MARGIN_X, y: top - metrics.header },
+    end: { x: MARGIN_X + CONTENT_WIDTH, y: top - metrics.header },
     thickness: 0.7,
     color: LINE,
   });
-  painter.y = top - FLOW_HEADER;
+  painter.y = top - metrics.header;
 }
 
 function paintFlowItem(
@@ -288,12 +441,13 @@ function paintFlowItem(
   columnIndex: number,
   top: number,
   cells: SheetCell[],
+  metrics: FlowMetrics,
 ): void {
   const stripWidth = (CONTENT_WIDTH - FLOW_GAP * (flowColumns - 1)) / flowColumns;
   const originX = MARGIN_X + columnIndex * (stripWidth + FLOW_GAP);
   painter.page.drawLine({
-    start: { x: originX, y: top - FLOW_ROW },
-    end: { x: originX + stripWidth, y: top - FLOW_ROW },
+    start: { x: originX, y: top - metrics.row },
+    end: { x: originX + stripWidth, y: top - metrics.row },
     thickness: 0.3,
     color: LINE,
   });
@@ -302,11 +456,11 @@ function paintFlowItem(
   strip.forEach((column, index) => {
     const width = stripWidth * column.width;
     const cell = cells[index] ?? { text: '' };
-    const size = 8;
+    const size = metrics.itemSize;
     if (index > 0) {
       painter.page.drawLine({
         start: { x, y: top },
-        end: { x, y: top - FLOW_ROW },
+        end: { x, y: top - metrics.row },
         thickness: 0.25,
         color: LINE,
       });
@@ -315,7 +469,7 @@ function paintFlowItem(
       painter,
       cell.text,
       column.align === 'right' ? x + width - 4 : x + 4,
-      top - (FLOW_ROW + size) / 2,
+      top - (metrics.row + size) / 2,
       size,
       INK,
       width - 8,
@@ -325,10 +479,10 @@ function paintFlowItem(
   });
 }
 
-function groupLead(painter: Painter, group: SheetGroup): number {
+function groupLead(painter: Painter, group: SheetGroup, scale = 1): number {
   const firstBand = group.bands[0];
-  const heading = group.title || group.note ? 18 + noteBlockHeight(painter, group.note) : 0;
-  return heading + (firstBand?.title ? 16 : 0) + 16;
+  const heading = group.title || group.note ? 18 * scale + noteBlockHeight(painter, group.note) : 0;
+  return heading + (firstBand?.title ? 16 * scale : 0) + 16 * scale;
 }
 
 function paintGroup(
@@ -336,43 +490,49 @@ function paintGroup(
   columns: SheetColumn[],
   group: SheetGroup,
   sectionFirst = false,
+  scale = 1,
 ): void {
+  const hasTitle = Boolean(group.title.trim());
   const heading = () => {
+    if (!hasTitle) {
+      paintColumns(painter, columns, scale);
+      return;
+    }
     if (sectionFirst) {
-      paintDateBand(painter, group);
-      paintColumns(painter, columns);
+      paintDateBand(painter, group, scale);
+      paintColumns(painter, columns, scale);
     } else {
-      paintColumns(painter, columns);
-      paintDateBand(painter, group);
+      paintColumns(painter, columns, scale);
+      paintDateBand(painter, group, scale);
     }
   };
   if (group.breakBefore) {
     forceNewPage(painter, false);
     heading();
-  } else {
-    const moved = ensure(painter, groupLead(painter, group), heading);
+  } else if (hasTitle) {
+    const moved = ensure(painter, groupLead(painter, group, scale), heading);
     if (!moved) {
       if (sectionFirst) {
-        paintDateBand(painter, group);
-        paintColumns(painter, columns);
+        paintDateBand(painter, group, scale);
+        paintColumns(painter, columns, scale);
       } else {
-        paintDateBand(painter, group);
+        paintDateBand(painter, group, scale);
       }
     }
   }
 
   for (const band of group.bands) {
-    paintBandRows(painter, columns, group, band, sectionFirst);
+    paintBandRows(painter, columns, group, band, sectionFirst, scale);
   }
   if (group.total) {
-    ensure(painter, 17, heading);
-    paintCells(painter, columns, group.total, 17, 8, true);
+    ensure(painter, 17 * scale, heading);
+    paintCells(painter, columns, group.total, 17 * scale, 8 * scale, true);
   }
 }
 
-function paintDateBand(painter: Painter, group: SheetGroup): void {
+function paintDateBand(painter: Painter, group: SheetGroup, scale = 1): void {
   if (group.title) {
-    paintBand(painter, group.title, 18, BAND, 9, INK, true);
+    paintBand(painter, group.title, 18 * scale, BAND, 9 * scale, INK, true);
   }
   if (group.note) {
     paintNote(painter, group.note);
@@ -385,28 +545,48 @@ function paintBandRows(
   group: SheetGroup,
   band: SheetBand,
   sectionFirst = false,
+  scale = 1,
 ): void {
   const resume = () => {
     if (sectionFirst) {
-      paintDateBand(painter, group);
-      paintColumns(painter, columns);
+      paintDateBand(painter, group, scale);
+      paintColumns(painter, columns, scale);
     } else {
-      paintColumns(painter, columns);
-      paintDateBand(painter, group);
+      paintColumns(painter, columns, scale);
+      paintDateBand(painter, group, scale);
     }
     if (band.title) {
-      paintBand(painter, band.title, 16, rgb(0.975, 0.965, 0.95), 8, INK, false);
+      paintBand(painter, band.title, 16 * scale, rgb(0.975, 0.965, 0.95), 8 * scale, INK, false);
     }
   };
   if (band.title) {
-    const moved = ensure(painter, 16 + 16, resume);
+    const moved = ensure(painter, 16 * scale + 16 * scale, resume);
     if (!moved) {
-      paintBand(painter, band.title, 16, rgb(0.975, 0.965, 0.95), 8, INK, false);
+      paintBand(painter, band.title, 16 * scale, rgb(0.975, 0.965, 0.95), 8 * scale, INK, false);
     }
   }
+  let mergeLabel = '';
+  let mergeLeft = 0;
   for (const row of band.rows) {
-    ensure(painter, 16, resume);
-    paintCells(painter, columns, row, 17, 8, false);
+    const moved = ensure(painter, 16 * scale, resume);
+    const cells = row.map((cell, index) => {
+      if (index !== 0) {
+        return cell;
+      }
+      if ((cell.rowSpan ?? 1) > 1 || (cell.text && !cell.mergeContinue)) {
+        mergeLabel = cell.text;
+        mergeLeft = Math.max(1, cell.rowSpan ?? 1);
+      }
+      if (cell.mergeContinue && moved && mergeLabel && mergeLeft > 0) {
+        return { text: mergeLabel, rowSpan: mergeLeft, wrap: true };
+      }
+      return cell;
+    });
+    paintCells(painter, columns, cells, 17 * scale, 8 * scale, false);
+    mergeLeft = Math.max(0, mergeLeft - 1);
+    if (mergeLeft === 0) {
+      mergeLabel = '';
+    }
   }
 }
 
@@ -433,8 +613,8 @@ function paintNote(painter: Painter, text: string): void {
   painter.y -= 3;
 }
 
-function paintColumns(painter: Painter, columns: SheetColumn[]): void {
-  const height = 20;
+function paintColumns(painter: Painter, columns: SheetColumn[], scale = 1): void {
+  const height = 20 * scale;
   ensure(painter, height);
   const top = painter.y;
   painter.page.drawRectangle({
@@ -447,7 +627,7 @@ function paintColumns(painter: Painter, columns: SheetColumn[]): void {
   let x = MARGIN_X;
   columns.forEach((column, index) => {
     const width = CONTENT_WIDTH * column.width;
-    const size = 8;
+    const size = 8 * scale;
     const baseline = top - (height + size) / 2;
     if (index > 0) {
       painter.page.drawLine({
@@ -526,17 +706,21 @@ function paintCells(
       color: TOTAL,
     });
   }
-  painter.page.drawLine({
-    start: { x: MARGIN_X, y: top - height },
-    end: { x: MARGIN_X + CONTENT_WIDTH, y: top - height },
-    thickness: total ? 0.7 : 0.35,
-    color: LINE,
-  });
   let x = MARGIN_X;
   columns.forEach((column, index) => {
     const width = CONTENT_WIDTH * column.width;
     const cell = cells[index] ?? { text: '' };
     const color = cell.tone === 'danger' ? DANGER : cell.tone === 'muted' ? MUTED : INK;
+    const openMerge = (cell.rowSpan ?? 1) > 1;
+    // Skip internal rules inside a vertical merge; the last row of the run draws the bottom edge.
+    if (!cell.mergeContinue && !openMerge) {
+      painter.page.drawLine({
+        start: { x, y: top - height },
+        end: { x: x + width, y: top - height },
+        thickness: total ? 0.7 : 0.35,
+        color: LINE,
+      });
+    }
     if (index > 0) {
       painter.page.drawLine({
         start: { x, y: top },
@@ -545,16 +729,41 @@ function paintCells(
         color: LINE,
       });
     }
-    drawFitted(
-      painter,
-      cell.text,
-      column.align === 'right' ? x + width - 5 : x + 5,
-      top - (height + size) / 2,
-      size,
-      color,
-      width - 10,
-      column.align,
-    );
+    if (cell.text) {
+      const pad = 5;
+      const maxWidth = Math.max(8, width - pad * 2);
+      const leftX = x + pad;
+      const rightX = x + width - pad;
+      if (cell.wrap) {
+        // One wrapped word/line per merged body row so long sub-types stay readable.
+        const maxLines = Math.max(1, cell.rowSpan ?? 1);
+        const lines = wrapToRows(painter.font, cell.text, size, maxWidth, maxLines);
+        lines.forEach((line, lineIndex) => {
+          const baseline = top - lineIndex * height - (height + size) / 2;
+          drawFitted(
+            painter,
+            line,
+            column.align === 'right' ? rightX : leftX,
+            baseline,
+            size,
+            color,
+            maxWidth,
+            column.align,
+          );
+        });
+      } else {
+        drawFitted(
+          painter,
+          cell.text,
+          column.align === 'right' ? rightX : leftX,
+          top - (height + size) / 2,
+          size,
+          color,
+          maxWidth,
+          column.align,
+        );
+      }
+    }
     x += width;
   });
   painter.y = top - height;
@@ -748,6 +957,28 @@ function wrap(font: PDFFont, text: string, size: number, maxWidth: number): stri
     lines.push(current);
   }
   return lines;
+}
+
+/** Prefer one word per row when wrapping into a merged cell; fall back to width wrap. */
+function wrapToRows(font: PDFFont, text: string, size: number, maxWidth: number, maxLines: number): string[] {
+  const source = text.replace(/\s+/g, ' ').trim();
+  if (!source || maxLines <= 0) {
+    return [];
+  }
+  const words = source.split(' ').filter(Boolean);
+  let lines: string[];
+  if (words.length > 1 && words.length <= maxLines && words.every((word) => font.widthOfTextAtSize(word, size) <= maxWidth)) {
+    lines = words;
+  } else {
+    lines = wrap(font, source, size, maxWidth);
+  }
+  if (lines.length <= maxLines) {
+    return lines;
+  }
+  const kept = lines.slice(0, maxLines);
+  const overflow = lines.slice(maxLines - 1).join(' ');
+  kept[maxLines - 1] = fit(font, overflow, size, maxWidth);
+  return kept;
 }
 
 function graphemes(value: string): string[] {

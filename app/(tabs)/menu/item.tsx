@@ -21,7 +21,7 @@ import { leaveScreen } from '../../../src/navigation/leave';
 import { useAuth } from '../../../src/context/AuthContext';
 import { inventoryErrorCode } from '../../../src/domain/errors';
 import {
-  defaultStationVisibility,
+  defaultStationDefaults,
   itemNames,
   knownTermLabel,
   strengthRequiresVolume,
@@ -33,14 +33,12 @@ import { useCatalog } from '../../../src/hooks/useCatalog';
 import { useTheme } from '../../../src/theme/theme-context';
 
 const EMPTY_FORM: CatalogItemInput = {
-  itemCode: '',
   nameEn: '',
   nameMr: '',
   brand: '',
   liquorType: 'NA',
   subType: 'NA',
-  showInBar: true,
-  showInKitchen: false,
+  serviceStation: 'bar',
   tracksStock: true,
   volumeMl: '',
   purchasePrice: '',
@@ -175,51 +173,33 @@ function ChoiceChip({ label, selected, onPress }: { label: string; selected: boo
   );
 }
 
-function StationMultiSelect({
-  showInBar,
-  showInKitchen,
+function StationSegment({
+  value,
   onChange,
   barLabel,
   kitchenLabel,
   hint,
 }: {
-  showInBar: boolean;
-  showInKitchen: boolean;
-  onChange: (next: { showInBar: boolean; showInKitchen: boolean }) => void;
+  value: ServiceStation;
+  onChange: (station: ServiceStation) => void;
   barLabel: string;
   kitchenLabel: string;
   hint: string;
 }) {
-  const toggle = (station: ServiceStation) => {
-    if (station === 'bar') {
-      const nextBar = !showInBar;
-      if (!nextBar && !showInKitchen) {
-        return;
-      }
-      onChange({ showInBar: nextBar, showInKitchen });
-      return;
-    }
-    const nextKitchen = !showInKitchen;
-    if (!showInBar && !nextKitchen) {
-      return;
-    }
-    onChange({ showInBar, showInKitchen: nextKitchen });
-  };
-
   return (
     <View>
       <Text className="mb-2 text-sm font-semibold text-ink">{hint}</Text>
-      <View className="flex-row gap-2">
+      <View className="flex-row rounded-full border border-line bg-surface p-1">
         {(['bar', 'kitchen'] as const).map((station) => {
-          const selected = station === 'bar' ? showInBar : showInKitchen;
+          const selected = value === station;
           return (
             <Pressable
               key={station}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: selected }}
-              onPress={() => toggle(station)}
-              className={`h-10 min-w-0 flex-1 items-center justify-center rounded-full border ${
-                selected ? 'border-accent bg-accent' : 'border-line bg-surface'
+              accessibilityRole="radio"
+              accessibilityState={{ selected }}
+              onPress={() => onChange(station)}
+              className={`h-10 min-w-0 flex-1 items-center justify-center rounded-full ${
+                selected ? 'bg-accent' : 'bg-transparent'
               }`}
             >
               <Text className={`text-sm font-semibold ${selected ? 'text-accent-ink' : 'text-ink'}`}>
@@ -285,14 +265,12 @@ export default function ItemFormScreen() {
     }
     seeded.current = true;
     setForm({
-      itemCode: existing.itemCode,
       nameEn: existing.nameEn,
       nameMr: existing.nameMr,
       brand: existing.brand,
       liquorType: existing.liquorType,
       subType: existing.subType,
-      showInBar: existing.showInBar,
-      showInKitchen: existing.showInKitchen,
+      serviceStation: existing.serviceStation,
       tracksStock: existing.tracksStock,
       volumeMl: String(existing.volumeMl),
       purchasePrice: formatRupeeInput(existing.purchasePrice),
@@ -316,7 +294,7 @@ export default function ItemFormScreen() {
         ...current,
         liquorType,
         subType,
-        ...defaultStationVisibility(liquorType),
+        ...defaultStationDefaults(liquorType),
       };
     });
   }, [itemId, itemStrengths, itemTypes]);
@@ -367,7 +345,7 @@ export default function ItemFormScreen() {
     }
   };
 
-  const kitchenOnly = form.showInKitchen && !form.showInBar;
+  const kitchen = form.serviceStation === 'kitchen';
   const showVolume = strengthRequiresVolume(form.subType);
   const typeChoices = choiceNames(
     itemTypes.map((term) => term.name),
@@ -415,16 +393,19 @@ export default function ItemFormScreen() {
             <Text className="text-sm text-danger">{t('catalog.errors.unknown-item')}</Text>
           ) : null}
 
-          <StationMultiSelect
-            showInBar={form.showInBar}
-            showInKitchen={form.showInKitchen}
-            onChange={(stations) => {
-              const kitchenOnlyNext = stations.showInKitchen && !stations.showInBar;
+          <StationSegment
+            value={form.serviceStation}
+            onChange={(serviceStation) =>
               patch({
-                ...stations,
-                tracksStock: kitchenOnlyNext ? false : form.tracksStock || stations.showInBar,
-              });
-            }}
+                serviceStation,
+                tracksStock:
+                  serviceStation === 'kitchen'
+                    ? false
+                    : form.serviceStation === 'kitchen'
+                      ? true
+                      : form.tracksStock,
+              })
+            }
             barLabel={t('catalog.stationBar')}
             kitchenLabel={t('catalog.stationKitchen')}
             hint={t('catalog.station')}
@@ -438,20 +419,7 @@ export default function ItemFormScreen() {
           />
 
           <FormCard title={t('catalog.basicInfo')}>
-            <Field label={t('catalog.code')} className="mt-0">
-              <TextInput
-                value={form.itemCode}
-                onChangeText={(value) =>
-                  patch({ itemCode: value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) })
-                }
-                autoCapitalize="characters"
-                autoCorrect={false}
-                placeholder={t('catalog.codePlaceholder')}
-                placeholderTextColor={palette.muted}
-                className={inputClass}
-              />
-            </Field>
-            <View className="mt-3 flex-row gap-3">
+            <View className="flex-row gap-3">
               <Field label={t('catalog.nameEn')} className="min-w-0 flex-1" alignLabel>
                 <TextInput
                   value={form.nameEn}
@@ -496,7 +464,7 @@ export default function ItemFormScreen() {
                     onPress={() =>
                       patch({
                         liquorType: type,
-                        ...defaultStationVisibility(type),
+                        ...defaultStationDefaults(type),
                       })
                     }
                   />
@@ -560,7 +528,7 @@ export default function ItemFormScreen() {
               ) : null}
               {showVolume ? (
                 <Field
-                  label={t(kitchenOnly ? 'catalog.volumeSnack' : 'catalog.volume')}
+                  label={t(kitchen ? 'catalog.volumeSnack' : 'catalog.volume')}
                   className="min-w-0 flex-1"
                   alignLabel
                 >

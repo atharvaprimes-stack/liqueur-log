@@ -18,15 +18,15 @@ import { displayBillNumber, lineTotalPaise } from '../domain/billing';
 import type { OrderErrorCode } from '../domain/errors';
 import { formatInr, parseQuantity, sanitizeQuantityInput } from '../domain/money';
 import {
-  filterOrderCatalog,
+  filterOrderCatalogAll,
   itemNames,
   tracksStock,
   volumeMessage,
-  type OrderCatalogSection,
   type StockItem,
 } from '../domain/models/inventory';
 import { balancePaise, type OrderLine, type PaymentMethod } from '../domain/models/orders';
 import type { TableRequest } from '../domain/models/tableRequests';
+import { getOrder } from '../data/repositories/orderRepository';
 import { useBilling } from '../hooks/useBilling';
 import { useOrderCart, type CartTarget } from '../hooks/useOrderCart';
 import { useTableRequests } from '../hooks/useTableRequests';
@@ -55,7 +55,6 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
   const orderSectionOffset = useRef(0);
   const rowOffsets = useRef<Record<string, number>>({});
   const [query, setQuery] = useState('');
-  const [section, setSection] = useState<OrderCatalogSection>('bar');
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [shareNotice, setShareNotice] = useState<'failed' | 'downloaded' | 'printFailed' | null>(null);
   const [formError, setFormError] = useState<OrderErrorCode | null>(null);
@@ -67,10 +66,11 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
   const [removingLine, setRemovingLine] = useState<{ line: OrderLine; available: number } | null>(
     null,
   );
+  const [closingBill, setClosingBill] = useState(false);
   const order = cart.order;
   const editable = order?.status === 'OPEN';
   const searching = query.trim().length > 0;
-  const busy = cart.busy;
+  const busy = cart.busy || billing.isSubmitting || closingBill;
   const tableId = target.kind === 'table' ? target.tableId : order?.tableId;
   const pendingRequests =
     editable && tableId ? tableRequests.pendingForTable(tableId) : [];
@@ -80,18 +80,14 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
     setFormError(null);
   }, i18n.language);
 
-  // Tab badges: full section totals, or match counts while searching.
-  const sectionCounts = useMemo(
-    () => ({
-      bar: filterOrderCatalog(cart.items, 'bar', query).length,
-      kitchen: filterOrderCatalog(cart.items, 'kitchen', query).length,
-    }),
-    [cart.items, query],
+  const searchResults = useMemo(
+    () => (searching ? filterOrderCatalogAll(cart.items, query) : []),
+    [cart.items, query, searching],
   );
 
-  const searchResults = useMemo(
-    () => (searching ? filterOrderCatalog(cart.items, section, query) : []),
-    [cart.items, query, searching, section],
+  const serialNos = useMemo(
+    () => new Map(cart.items.map((item) => [item.id, item.serialNo])),
+    [cart.items],
   );
 
   // Newest serves first — matches bar POS “just poured” flow.
@@ -123,7 +119,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
       setFormError(null);
       setAddingItemId(item.id);
       void cart
-        .addItem(item.id, quantity, section)
+        .addItem(item.id, quantity)
         .then((next) => {
           if (!next) {
             return;
@@ -140,7 +136,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
           setAddingItemId((current) => (current === item.id ? null : current));
         });
     },
-    [cart, pulseLine, searching, section],
+    [cart, pulseLine, searching],
   );
 
   const unitsOnOrder = useCallback(
@@ -217,14 +213,15 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
   const onCancel = useCallback(() => {
     if (order?.status === 'OPEN' && order.lines.length === 0) {
       const closingTableId = order.orderType === 'TABLE' ? order.tableId : null;
-      void cart
-        .release()
-        .then((released) => {
-          if (released && closingTableId) {
-            void tableRequests.closeForTable(closingTableId);
-          }
-        })
-        .finally(() => leaveScreen(parent));
+      void cart.release().then((released) => {
+        if (!released) {
+          return;
+        }
+        if (closingTableId) {
+          void tableRequests.closeForTable(closingTableId);
+        }
+        leaveScreen(parent);
+      });
       return;
     }
     leaveScreen(parent);
@@ -242,14 +239,11 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
   const onSearchSubmit = async () => {
     const trimmed = query.trim();
     if (!trimmed) {
-      setFormError('code');
+      setFormError('unknown-item');
       return;
     }
-    const matches = filterOrderCatalog(cart.items, section, trimmed);
-    const exact = matches.find(
-      (item) =>
-        String(item.serialNo) === trimmed || item.itemCode.toLowerCase() === trimmed.toLowerCase(),
-    );
+    const matches = filterOrderCatalogAll(cart.items, trimmed);
+    const exact = matches.find((item) => String(item.serialNo) === trimmed);
     if (exact) {
       onPickCatalogItem(exact);
       return;
@@ -258,7 +252,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
       onPickCatalogItem(matches[0]);
       return;
     }
-    setFormError('code');
+    setFormError('unknown-item');
   };
 
   const onCollect = async (payment: { method: PaymentMethod; paidAmount: number }) => {
@@ -285,13 +279,17 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
       setRequestNotice(false);
       setRequestBusyId(request.id);
       try {
-        // Accept = add to CURRENT ORDER, then close the incoming request.
+        // Accept remotely first so a peer device cannot double-add the same request.
+        const accepted = await tableRequests.acceptRequest(request.id);
+        if (!accepted) {
+          setRequestNotice(true);
+          return;
+        }
         const next = await cart.addItem(request.itemId, request.quantity);
         if (!next) {
           setRequestNotice(true);
           return;
         }
-        await tableRequests.acceptRequest(request.id);
         const newest = [...next.lines].reverse().find((line) => line.itemId === request.itemId);
         if (newest) {
           requestAnimationFrame(() => pulseLine(newest.id));
@@ -330,21 +328,26 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
     setRequestNotice(false);
     setRequestBusyId('all');
     try {
-      const acceptedIds: string[] = [];
       let lastOrder = cart.order;
+      let added = 0;
       for (const request of pendingRequests) {
+        // Accept each request before adding so peers cannot double-serve it.
+        const accepted = await tableRequests.acceptRequest(request.id);
+        if (!accepted) {
+          setRequestNotice(true);
+          break;
+        }
         const next = await cart.addItem(request.itemId, request.quantity);
         if (!next) {
           setRequestNotice(true);
           break;
         }
-        acceptedIds.push(request.id);
         lastOrder = next;
+        added += 1;
       }
-      if (acceptedIds.length === 0) {
+      if (added === 0) {
         return;
       }
-      await tableRequests.acceptRequests(acceptedIds);
       const newest = lastOrder ? [...lastOrder.lines].reverse()[0] : null;
       if (newest) {
         requestAnimationFrame(() => pulseLine(newest.id));
@@ -432,103 +435,78 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
               {shareNotice === 'downloaded' ? <Text className="mt-2 text-sm text-ink">{t('billing.downloaded')}</Text> : null}
 
               {editable ? (
-                <View className="mt-3">
-                  <View className="flex-row rounded-lg border border-line bg-surface p-1">
-                    {(['bar', 'kitchen'] as const).map((tab) => {
-                      const active = section === tab;
-                      const count = tab === 'bar' ? sectionCounts.bar : sectionCounts.kitchen;
-                      return (
-                        <Pressable
-                          key={tab}
-                          accessibilityRole="button"
-                          accessibilityState={{ selected: active }}
-                          onPress={() => setSection(tab)}
-                          className={`h-9 min-w-0 flex-1 items-center justify-center rounded-md ${active ? 'bg-accent' : ''}`}
-                        >
-                          <Text
-                            className={`text-sm font-semibold ${active ? 'text-accent-ink' : 'text-muted'}`}
-                            numberOfLines={1}
-                          >
-                            {t(tab === 'bar' ? 'billing.barItems' : 'billing.kitchenItems')} ({count})
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-
-                  <View className="mt-2 overflow-hidden rounded-lg border border-line bg-surface">
-                    <View className="h-11 flex-row items-center px-3">
-                      <Ionicons name="search" size={18} color={palette.muted} />
-                      <TextInput
-                        value={query}
-                        onChangeText={(value) => {
-                          setQuery(value);
-                          setFormError(null);
-                        }}
-                        onSubmitEditing={() => {
-                          void onSearchSubmit();
-                        }}
-                        returnKeyType="search"
-                        placeholder={t('billing.searchPlaceholder')}
-                        placeholderTextColor={palette.muted}
-                        autoCorrect={false}
-                        autoCapitalize="characters"
-                        className="mx-2 h-11 min-w-0 flex-1 py-0 text-base text-ink"
-                      />
-                      {query.length > 0 ? (
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel={t('common.cancel')}
-                          onPress={() => {
-                            setQuery('');
-                            setFormError(null);
-                          }}
-                          className="mr-1 h-8 w-8 items-center justify-center rounded-md"
-                        >
-                          <Ionicons name="close-circle" size={18} color={palette.muted} />
-                        </Pressable>
-                      ) : null}
+                <View className="mt-3 overflow-hidden rounded-lg border border-line bg-surface">
+                  <View className="h-11 flex-row items-center px-3">
+                    <Ionicons name="search" size={18} color={palette.muted} />
+                    <TextInput
+                      value={query}
+                      onChangeText={(value) => {
+                        setQuery(value);
+                        setFormError(null);
+                      }}
+                      onSubmitEditing={() => {
+                        void onSearchSubmit();
+                      }}
+                      returnKeyType="search"
+                      placeholder={t('billing.searchPlaceholder')}
+                      placeholderTextColor={palette.muted}
+                      autoCorrect={false}
+                      autoCapitalize="characters"
+                      className="mx-2 h-11 min-w-0 flex-1 py-0 text-base text-ink"
+                    />
+                    {query.length > 0 ? (
                       <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel={t('billing.voiceSearch')}
+                        accessibilityLabel={t('common.cancel')}
                         onPress={() => {
-                          if (!voice.supported) {
-                            Alert.alert(t('billing.voiceUnavailableTitle'), t('billing.voiceUnavailableBody'));
-                            return;
-                          }
-                          voice.toggle();
+                          setQuery('');
+                          setFormError(null);
                         }}
-                        className={`h-8 w-8 items-center justify-center rounded-md ${voice.listening ? 'bg-accent' : ''}`}
+                        className="mr-1 h-8 w-8 items-center justify-center rounded-md"
                       >
-                        <Ionicons
-                          name={voice.listening ? 'mic' : 'mic-outline'}
-                          size={18}
-                          color={voice.listening ? palette.accentInk : palette.ink}
-                        />
+                        <Ionicons name="close-circle" size={18} color={palette.muted} />
                       </Pressable>
-                    </View>
-
-                    {searching ? (
-                      <View className="border-t border-line">
-                        {searchMatches.length === 0 ? (
-                          <Text className="px-3 py-2.5 text-sm text-muted">{t('billing.pickerEmpty')}</Text>
-                        ) : (
-                          searchMatches.map((item, index) => (
-                            <SearchMatchRow
-                              key={item.id}
-                              item={item}
-                              language={i18n.language}
-                              busy={busy}
-                              adding={addingItemId === item.id}
-                              showDivider={index < searchMatches.length - 1}
-                              onAdd={(quantity) => onPickCatalogItem(item, quantity)}
-                              onQuantityError={() => setFormError('quantity')}
-                            />
-                          ))
-                        )}
-                      </View>
                     ) : null}
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={t('billing.voiceSearch')}
+                      onPress={() => {
+                        if (!voice.supported) {
+                          Alert.alert(t('billing.voiceUnavailableTitle'), t('billing.voiceUnavailableBody'));
+                          return;
+                        }
+                        voice.toggle();
+                      }}
+                      className={`h-8 w-8 items-center justify-center rounded-md ${voice.listening ? 'bg-accent' : ''}`}
+                    >
+                      <Ionicons
+                        name={voice.listening ? 'mic' : 'mic-outline'}
+                        size={18}
+                        color={voice.listening ? palette.accentInk : palette.ink}
+                      />
+                    </Pressable>
                   </View>
+
+                  {searching ? (
+                    <View className="border-t border-line">
+                      {searchMatches.length === 0 ? (
+                        <Text className="px-3 py-2.5 text-sm text-muted">{t('billing.pickerEmpty')}</Text>
+                      ) : (
+                        searchMatches.map((item, index) => (
+                          <SearchMatchRow
+                            key={item.id}
+                            item={item}
+                            language={i18n.language}
+                            busy={busy}
+                            adding={addingItemId === item.id}
+                            showDivider={index < searchMatches.length - 1}
+                            onAdd={(quantity) => onPickCatalogItem(item, quantity)}
+                            onQuantityError={() => setFormError('quantity')}
+                          />
+                        ))
+                      )}
+                    </View>
+                  ) : null}
                 </View>
               ) : null}
 
@@ -574,6 +552,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                 <OrderStationBlock
                   title={t('billing.barItems')}
                   lines={barLines}
+                  serialNos={serialNos}
                   language={i18n.language}
                   editable={editable}
                   busy={busy}
@@ -587,6 +566,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                 <OrderStationBlock
                   title={t('billing.kitchenItems')}
                   lines={kitchenLines}
+                  serialNos={serialNos}
                   language={i18n.language}
                   editable={editable}
                   busy={busy}
@@ -686,19 +666,34 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
             }}
             onPrint={(preview, payment) => {
               void (async () => {
+                if (billing.isSubmitting || closingBill || !currentUser || !order) {
+                  return;
+                }
+                setClosingBill(true);
                 setShareNotice(null);
                 // Native PrintManager sits under RN Modal; Android resolves as soon as
                 // the dialog opens, so keep the sheet closed afterward.
                 setPaymentOpen(false);
-                await afterModalDismissed();
-                const ok = await billing.printPreview(preview);
-                if (!ok) {
-                  setPaymentOpen(true);
-                  setShareNotice('printFailed');
-                  return;
+                try {
+                  await afterModalDismissed();
+                  const ok = await billing.printPreview(preview);
+                  if (!ok) {
+                    setPaymentOpen(true);
+                    setShareNotice('printFailed');
+                    return;
+                  }
+                  // Printed total must still match the live bill — abort if cart changed mid-print.
+                  const live = await getOrder(currentUser.tenantId, order.id);
+                  if (Math.round(live.totalAmount * 100) !== Math.round(payment.paidAmount * 100)) {
+                    setPaymentOpen(true);
+                    Alert.alert(t('billing.sheetTitle'), t('billing.errors.unknown'));
+                    return;
+                  }
+                  // Successful bill print settles the order (counter + table).
+                  await onCollect(payment);
+                } finally {
+                  setClosingBill(false);
                 }
-                // Successful bill print settles the order (counter + table).
-                await onCollect(payment);
               })();
             }}
           />
@@ -707,7 +702,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
             visible={editingLine !== null}
             title={
               editingLine
-                ? `${editingLine.itemCode} · ${itemNames(editingLine, i18n.language).primary}`
+                ? `${linePrefix(editingLine, serialNos)}${itemNames(editingLine, i18n.language).primary}`
                 : ''
             }
             subtitle={editingVolume ? t(editingVolume.key, editingVolume.values) : undefined}
@@ -721,7 +716,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
             visible={removingLine !== null}
             title={
               removingLine
-                ? `${removingLine.line.itemCode} · ${itemNames(removingLine.line, i18n.language).primary}`
+                ? `${linePrefix(removingLine.line, serialNos)}${itemNames(removingLine.line, i18n.language).primary}`
                 : ''
             }
             available={removingLine?.available ?? 1}
@@ -852,9 +847,15 @@ function IncomingRequestsPanel({
   );
 }
 
+function linePrefix(line: OrderLine, serialNos: ReadonlyMap<string, number>): string {
+  const serialNo = serialNos.get(line.itemId);
+  return serialNo === undefined ? '' : `#${serialNo} · `;
+}
+
 function OrderStationBlock({
   title,
   lines,
+  serialNos,
   language,
   editable,
   busy,
@@ -867,6 +868,7 @@ function OrderStationBlock({
 }: {
   title: string;
   lines: OrderLine[];
+  serialNos: ReadonlyMap<string, number>;
   language: string;
   editable: boolean;
   busy: boolean;
@@ -894,6 +896,7 @@ function OrderStationBlock({
         >
           <CompactOrderRow
             line={line}
+            serialNos={serialNos}
             language={language}
             editable={editable}
             busy={busy}
@@ -910,6 +913,7 @@ function OrderStationBlock({
 
 function CompactOrderRow({
   line,
+  serialNos,
   language,
   editable,
   busy,
@@ -919,6 +923,7 @@ function CompactOrderRow({
   onRemove,
 }: {
   line: OrderLine;
+  serialNos: ReadonlyMap<string, number>;
   language: string;
   editable: boolean;
   busy: boolean;
@@ -967,7 +972,7 @@ function CompactOrderRow({
         >
           <View className="min-w-0 flex-1">
             <Text className="text-sm font-bold text-ink" numberOfLines={1}>
-              {line.itemCode} • {names.primary}
+              {linePrefix(line, serialNos)}{names.primary}
             </Text>
             <Text className="text-xs text-muted" numberOfLines={1}>
               {t(volume.key, volume.values)}

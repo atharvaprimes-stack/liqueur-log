@@ -91,9 +91,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [currentUser]);
 
   const logout = useCallback(async () => {
-    await clearSession();
-    setCurrentUser(null);
-    setCurrentTenant(null);
+    try {
+      await clearSession();
+    } finally {
+      // Always clear React state so inactivity logout cannot bounce back to /home.
+      setCurrentUser(null);
+      setCurrentTenant(null);
+    }
   }, []);
 
   const updateAccount = useCallback(

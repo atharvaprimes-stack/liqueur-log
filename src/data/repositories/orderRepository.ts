@@ -33,7 +33,7 @@ import {
 const ORDER_COLUMNS = `id, tenant_id, table_id, order_type, status, total_amount, paid_amount,
   payment_method, is_credit, order_sequence_string, created_at, closed_at`;
 
-const LINE_COLUMNS = `id, item_id, item_code, name_en, name_mr, liquor_type, service_station, volume_ml, quantity, unit_price`;
+const LINE_COLUMNS = `id, item_id, name_en, name_mr, liquor_type, service_station, volume_ml, quantity, unit_price`;
 
 type OrderRow = {
   id: string;
@@ -54,7 +54,6 @@ type OrderRow = {
 type LineRow = {
   id: string;
   item_id: string;
-  item_code: string;
   name_en: string;
   name_mr: string;
   liquor_type: string;
@@ -66,7 +65,6 @@ type LineRow = {
 
 type ItemRow = {
   id: string;
-  item_code: string;
   name_en: string;
   name_mr: string;
   liquor_type: string;
@@ -228,8 +226,7 @@ export async function addOrderItem(input: {
   tenantId: string;
   actorId: string;
   orderId: string;
-  itemCode?: string;
-  itemId?: string;
+  itemId: string;
   quantity: number;
   /** Active order tab; stamps line routing for dual-station items. */
   serviceStation?: ServiceStation;
@@ -241,7 +238,7 @@ export async function addOrderItem(input: {
   return withLockedTransaction(async (database) => {
     await assertActor(database, input.tenantId, input.actorId);
     const order = await requireOpenOrder(database, input.tenantId, input.orderId);
-    const item = await findItem(database, input.tenantId, input);
+    const item = await findItem(database, input.tenantId, input.itemId);
     const stocked = itemTracksStock(item);
     if (stocked && item.current_stock < input.quantity) {
       throw new OrderValidationError('stock');
@@ -259,14 +256,13 @@ export async function addOrderItem(input: {
     for (let index = 0; index < input.quantity; index += 1) {
       await database.runAsync(
         `INSERT INTO order_items (
-           id, order_id, item_id, item_code, name_en, name_mr, liquor_type, service_station,
+           id, order_id, item_id, name_en, name_mr, liquor_type, service_station,
            volume_ml, quantity, unit_price
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           newId(),
           order.id,
           item.id,
-          item.item_code,
           item.name_en,
           item.name_mr,
           item.liquor_type,
@@ -636,25 +632,16 @@ async function applyStockDelta(
 async function findItem(
   database: SQLiteDatabase,
   tenantId: string,
-  input: { itemCode?: string; itemId?: string },
+  itemId: string,
 ): Promise<ItemRow> {
-  const code = input.itemCode?.trim() ?? '';
-  const row = input.itemId
-    ? await database.getFirstAsync<ItemRow>(
-        `SELECT id, item_code, name_en, name_mr, liquor_type, service_station, tracks_stock,
-                volume_ml, selling_price, current_stock
-         FROM items WHERE id = ? AND tenant_id = ?`,
-        [input.itemId, tenantId],
-      )
-    : await database.getFirstAsync<ItemRow>(
-        `SELECT id, item_code, name_en, name_mr, liquor_type, service_station, tracks_stock,
-                volume_ml, selling_price, current_stock
-         FROM items WHERE tenant_id = ? AND item_code = ? COLLATE NOCASE
-         ORDER BY item_code LIMIT 1`,
-        [tenantId, code],
-      );
+  const row = await database.getFirstAsync<ItemRow>(
+    `SELECT id, name_en, name_mr, liquor_type, service_station, tracks_stock,
+            volume_ml, selling_price, current_stock
+     FROM items WHERE id = ? AND tenant_id = ?`,
+    [itemId, tenantId],
+  );
   if (!row) {
-    throw new OrderValidationError(input.itemId ? 'unknown-item' : 'code');
+    throw new OrderValidationError('unknown-item');
   }
   return row;
 }
@@ -750,7 +737,6 @@ function mapLine(row: LineRow): OrderLine {
   return {
     id: row.id,
     itemId: row.item_id,
-    itemCode: row.item_code,
     nameEn: row.name_en,
     nameMr: row.name_mr,
     liquorType: row.liquor_type,

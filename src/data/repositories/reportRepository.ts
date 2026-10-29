@@ -9,7 +9,7 @@ import type {
 } from '../../domain/reports';
 import { resolveStationFlags, type StockItem } from '../../domain/models/inventory';
 
-const ITEM_COLUMNS = `id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
+const ITEM_COLUMNS = `id, tenant_id, serial_no, name_en, name_mr, brand, liquor_type, sub_type,
   service_station, show_in_bar, show_in_kitchen, tracks_stock,
   volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold`;
 
@@ -17,7 +17,6 @@ type ItemRow = {
   id: string;
   tenant_id: string;
   serial_no: number;
-  item_code: string;
   name_en: string;
   name_mr: string;
   brand: string;
@@ -37,7 +36,6 @@ type ItemRow = {
 type MovementSqlRow = {
   day: string;
   item_id: string;
-  item_code: string;
   name_en: string;
   name_mr: string;
   liquor_type: string;
@@ -79,7 +77,6 @@ export async function loadReportSource(tenantId: string, bounds: ReportBounds): 
     const salesLines = await database.getAllAsync<MovementSqlRow>(
       `SELECT ${localDay('o.closed_at')} AS day,
               oi.item_id AS item_id,
-              oi.item_code AS item_code,
               oi.name_en AS name_en,
               oi.name_mr AS name_mr,
               oi.liquor_type AS liquor_type,
@@ -87,7 +84,7 @@ export async function loadReportSource(tenantId: string, bounds: ReportBounds): 
               oi.unit_price AS unit_price,
               COALESCE(u.name, '') AS staff_name,
               SUM(oi.quantity) AS quantity,
-              SUM(oi.quantity * oi.unit_price) AS amount
+              SUM(oi.quantity * ROUND(oi.unit_price * 100)) / 100.0 AS amount
        FROM order_items oi
        JOIN orders o ON o.id = oi.order_id
        LEFT JOIN users u ON u.id = o.created_by
@@ -95,7 +92,7 @@ export async function loadReportSource(tenantId: string, bounds: ReportBounds): 
          AND o.status = 'PAID'
          AND o.closed_at >= ?
          AND o.closed_at < ?
-       GROUP BY day, oi.item_id, oi.item_code, oi.name_en, oi.name_mr, oi.liquor_type, oi.volume_ml, oi.unit_price, o.created_by, u.name
+       GROUP BY day, oi.item_id, oi.name_en, oi.name_mr, oi.liquor_type, oi.volume_ml, oi.unit_price, o.created_by, u.name
        ORDER BY day ASC, oi.name_en COLLATE NOCASE ASC, u.name COLLATE NOCASE ASC`,
       [tenantId, bounds.from, bounds.until],
     );
@@ -121,7 +118,6 @@ export async function loadReportSource(tenantId: string, bounds: ReportBounds): 
               p.supplier_name AS supplier_name,
               p.invoice_number AS invoice_number,
               pi.item_id AS item_id,
-              i.item_code AS item_code,
               i.name_en AS name_en,
               i.name_mr AS name_mr,
               i.liquor_type AS liquor_type,
@@ -135,7 +131,7 @@ export async function loadReportSource(tenantId: string, bounds: ReportBounds): 
        WHERE p.tenant_id = ?
          AND p.purchase_date >= ?
          AND p.purchase_date < ?
-       GROUP BY day, p.supplier_name, p.invoice_number, pi.item_id, i.item_code, i.name_en, i.name_mr, i.liquor_type, i.volume_ml, pi.unit_purchase_price
+       GROUP BY day, p.supplier_name, p.invoice_number, pi.item_id, i.name_en, i.name_mr, i.liquor_type, i.volume_ml, pi.unit_purchase_price
        ORDER BY day ASC, p.supplier_name COLLATE NOCASE ASC, p.invoice_number COLLATE NOCASE ASC, i.name_en COLLATE NOCASE ASC`,
       [tenantId, bounds.from, bounds.until],
     );
@@ -180,7 +176,6 @@ function mapMovement(row: MovementSqlRow): MovementRow {
   return {
     day: row.day,
     itemId: row.item_id,
-    itemCode: row.item_code,
     nameEn: row.name_en,
     nameMr: row.name_mr,
     liquorType: row.liquor_type,
@@ -248,8 +243,6 @@ function mapItem(row: ItemRow): StockItem | null {
     return null;
   }
   const stations = resolveStationFlags({
-    show_in_bar: row.show_in_bar,
-    show_in_kitchen: row.show_in_kitchen,
     tracks_stock: row.tracks_stock,
     service_station: row.service_station,
     liquor_type: row.liquor_type,
@@ -258,15 +251,12 @@ function mapItem(row: ItemRow): StockItem | null {
     id: row.id,
     tenantId: row.tenant_id,
     serialNo,
-    itemCode: row.item_code,
     nameEn: row.name_en,
     nameMr: row.name_mr,
     brand: row.brand,
     liquorType: row.liquor_type,
     subType: row.sub_type,
     serviceStation: stations.serviceStation,
-    showInBar: stations.showInBar,
-    showInKitchen: stations.showInKitchen,
     tracksStock: stations.tracksStock,
     volumeMl,
     purchasePrice: Math.round(purchasePrice * 100) / 100,

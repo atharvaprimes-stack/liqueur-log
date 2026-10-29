@@ -34,7 +34,6 @@ const CHUNK_SIZE = 40;
 /** Column order matches the New Item form / create-catalog-template.mjs */
 const ITEM_COLUMNS = [
   'service_station',
-  'item_code',
   'name_en',
   'name_mr',
   'brand',
@@ -81,15 +80,19 @@ function cleanLabel(value, field, maxLen = 80) {
   return clean;
 }
 
-function parseItemCode(value) {
-  const itemCode = String(value ?? '')
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '');
-  if (!/^[A-Z0-9]{2,12}$/.test(itemCode)) {
-    throw new Error(`Invalid item_code: "${value}" (need 2–12 A–Z / 0–9)`);
+function parseOptionalId(value) {
+  const text = String(value ?? '').trim();
+  if (!text) {
+    return null;
   }
-  return itemCode;
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      text,
+    )
+  ) {
+    throw new Error(`Invalid id: "${value}" (need a UUID)`);
+  }
+  return text.toLowerCase();
 }
 
 function isNotApplicable(value) {
@@ -239,24 +242,27 @@ function parseVendors(rawRows) {
 
 function parseItems(rawRows, typeNames, strengthNames) {
   const items = [];
-  const seenCodes = new Set();
+  const seenIds = new Set();
   const typeSet = new Set([...typeNames].map((n) => n.toLowerCase()));
   const strengthSet = new Set([...strengthNames].map((n) => n.toLowerCase()));
 
   rawRows.forEach((row, index) => {
     const line = index + 2;
     try {
-      const blank =
-        !String(row.item_code ?? '').trim() && !String(row.name_en ?? '').trim();
+      const blank = !String(row.name_en ?? '').trim() && !String(row.id ?? '').trim();
       if (blank) {
         return;
       }
 
-      const itemCode = parseItemCode(row.item_code);
-      if (seenCodes.has(itemCode)) {
-        throw new Error(`Duplicate item_code ${itemCode}`);
+      const id = parseOptionalId(row.id);
+      if (id) {
+        if (seenIds.has(id)) {
+          throw new Error(`Duplicate id ${id}`);
+        }
+        seenIds.add(id);
       }
-      seenCodes.add(itemCode);
+
+      const serialNo = parseIntField(row.serial_no, 'serial_no', 1, 999999, true);
 
       const itemType = cleanLabel(row.item_type, 'item_type', 40);
       const strength = cleanLabel(row.strength, 'strength', 40);
@@ -282,7 +288,8 @@ function parseItems(rawRows, typeNames, strengthNames) {
         parseIntField(row.opening_stock, 'opening_stock', 0, 999999, true) ?? 0;
 
       items.push({
-        itemCode,
+        id,
+        serialNo,
         nameEn: cleanLabel(row.name_en, 'name_en'),
         nameMr: cleanLabel(row.name_mr, 'name_mr'),
         brand: cleanLabel(row.brand, 'brand'),
@@ -400,13 +407,13 @@ function buildChanges(tenantId, parsed) {
 
   // 4) Items (+ optional opening stock)
   parsed.items.forEach((item, index) => {
-    const id = crypto.randomUUID();
+    const id = item.id ?? crypto.randomUUID();
+    const serialNo = item.serialNo ?? index + 1;
     changes.push(
       change('items', id, {
         id,
         tenant_id: tenantId,
-        serial_no: index + 1,
-        item_code: item.itemCode,
+        serial_no: serialNo,
         name_en: item.nameEn,
         name_mr: item.nameMr,
         brand: item.brand,
@@ -430,7 +437,7 @@ function buildChanges(tenantId, parsed) {
           item_id: id,
           delta: item.openingStock,
           reason: 'adjust',
-          source_id: `import:${item.itemCode}`,
+          source_id: `import:${id}`,
           created_at: now + index,
         }),
       );
