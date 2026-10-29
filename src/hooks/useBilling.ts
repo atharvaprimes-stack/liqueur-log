@@ -67,7 +67,7 @@ export function useBilling(): {
             const names = itemNames(line, i18n.language);
             const linePaise = lineTotalPaise(line.quantity, line.unitPrice);
             return {
-              label: receiptItemLabel(names.primary, line.liquorType, line.volumeMl, line.serviceStation),
+              label: receiptItemLabel(names.primary, line.volumeMl),
               quantity: line.quantity,
               unitPrice: line.unitPrice,
               lineTotal: linePaise / 100,

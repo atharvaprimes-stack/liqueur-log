@@ -172,15 +172,14 @@ export function formatReceiptMath(quantity: number, unitPrice: number, pcs: stri
   return `${quantity} ${pcs} x ${formatReceiptAmount(unitPrice)}`;
 }
 
-export function receiptItemLabel(
-  name: string,
-  liquorType: string,
-  volumeMl: number,
-  station?: ServiceStation,
-): string {
+export function receiptItemLabel(name: string, volumeMl: number): string {
   const title = name.trim().replace(/\s+/g, ' ');
-  const kitchen = station === 'kitchen' || liquorType === 'Snacks';
-  const size = kitchen ? `${volumeMl}g` : `${volumeMl}ml`;
+  // Pack size 0/1 is a placeholder (e.g. roti) — omit from receipt text.
+  // Always label in ml (liquor, water, etc.); never append "g".
+  if (!Number.isFinite(volumeMl) || volumeMl <= 1) {
+    return title;
+  }
+  const size = `${volumeMl}ml`;
   return title ? `${title} ${size}` : size;
 }
 
