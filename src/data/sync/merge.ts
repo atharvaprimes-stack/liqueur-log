@@ -6,6 +6,7 @@ import {
   nextSequenceValue,
   readSequenceNumber,
 } from '../../domain/billing';
+import { resolveStationFlags, visibilityFlagsForStation } from '../../domain/models/inventory';
 import { isUniqueConstraintError } from '../local/database';
 import { normalizeTableCount } from '../local/rows';
 import { rememberAck } from './outbox';
@@ -59,6 +60,8 @@ export async function applySnapshot(
 }
 
 export async function recomputeStock(database: SQLiteDatabase, tenantId: string): Promise<void> {
+  // Sales only decrement when tracks_stock = 1; keep the same rule on merge so
+  // kitchen / non-tracked items are not drained by historical order lines.
   await database.runAsync(
     `UPDATE items
      SET current_stock = MAX(0, CAST(
@@ -80,7 +83,7 @@ export async function recomputeStock(database: SQLiteDatabase, tenantId: string)
          WHERE stock_movements.item_id = items.id AND stock_movements.tenant_id = items.tenant_id
        ), 0)
      AS INTEGER))
-     WHERE tenant_id = ?`,
+     WHERE tenant_id = ? AND tracks_stock = 1`,
     [tenantId],
   );
 }
@@ -136,6 +139,9 @@ async function applyUser(database: SQLiteDatabase, tenantId: string, user: Recor
   if (!nextHash) {
     return;
   }
+  // Missing is_active means "unchanged / active" — never deactivate by omission.
+  const isActive =
+    user.is_active === undefined || user.is_active === null ? 1 : booleanField(user, 'is_active') ? 1 : 0;
   const saved = await runSavepoint(database, async () => {
     await database.runAsync(
       `INSERT INTO users (id, tenant_id, mobile_number, mpin_hash, name, role, is_active)
@@ -147,7 +153,7 @@ async function applyUser(database: SQLiteDatabase, tenantId: string, user: Recor
          role = excluded.role,
          is_active = excluded.is_active
        WHERE users.tenant_id = excluded.tenant_id`,
-      [id, tenantId, mobile, nextHash, name, role, booleanField(user, 'is_active') ? 1 : 0],
+      [id, tenantId, mobile, nextHash, name, role, isActive],
     );
   });
   if (saved === 'ok') {
@@ -216,27 +222,32 @@ async function applyItem(database: SQLiteDatabase, tenantId: string, item: Recor
   const saved = await runSavepoint(database, async () => {
     const incomingSerial = Math.round(numberField(item, 'serial_no'));
     const liquorType = textField(item, 'liquor_type');
-    const serviceStation =
-      textField(item, 'service_station').toLowerCase() === 'kitchen' || liquorType.toLowerCase() === 'snacks'
-        ? 'kitchen'
-        : 'bar';
+    const stations = resolveStationFlags({
+      tracks_stock: item.tracks_stock,
+      service_station: textField(item, 'service_station'),
+      liquor_type: liquorType,
+    });
+    const visibility = visibilityFlagsForStation(stations.serviceStation);
     await database.runAsync(
       `INSERT INTO items (
-         id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
-         service_station, volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+         id, tenant_id, serial_no, name_en, name_mr, brand, liquor_type, sub_type,
+         service_station, show_in_bar, show_in_kitchen, tracks_stock,
+         volume_ml, purchase_price, selling_price, current_stock, low_stock_threshold, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          serial_no = CASE
            WHEN excluded.serial_no > 0 THEN excluded.serial_no
            ELSE items.serial_no
          END,
-         item_code = excluded.item_code,
          name_en = excluded.name_en,
          name_mr = excluded.name_mr,
          brand = excluded.brand,
          liquor_type = excluded.liquor_type,
          sub_type = excluded.sub_type,
          service_station = excluded.service_station,
+         show_in_bar = excluded.show_in_bar,
+         show_in_kitchen = excluded.show_in_kitchen,
+         tracks_stock = excluded.tracks_stock,
          volume_ml = excluded.volume_ml,
          purchase_price = excluded.purchase_price,
          selling_price = excluded.selling_price,
@@ -248,13 +259,15 @@ async function applyItem(database: SQLiteDatabase, tenantId: string, item: Recor
         id,
         tenantId,
         incomingSerial > 0 ? incomingSerial : 0,
-        textField(item, 'item_code'),
         textField(item, 'name_en'),
         textField(item, 'name_mr'),
         textField(item, 'brand'),
         liquorType,
         textField(item, 'sub_type'),
-        serviceStation,
+        stations.serviceStation,
+        visibility.showInBar ? 1 : 0,
+        visibility.showInKitchen ? 1 : 0,
+        stations.tracksStock ? 1 : 0,
         Math.round(numberField(item, 'volume_ml')),
         numberField(item, 'purchase_price'),
         numberField(item, 'selling_price'),
@@ -388,10 +401,18 @@ async function applyOrder(database: SQLiteDatabase, tenantId: string, order: Rec
     !sequence ||
     (orderType !== 'TABLE' && orderType !== 'COUNTER') ||
     (status !== 'OPEN' && status !== 'PAID') ||
-    textField(order, 'tenant_id') !== tenantId ||
-    (await isPending(database, 'orders', id))
+    textField(order, 'tenant_id') !== tenantId
   ) {
     return;
+  }
+
+  // Local cart upserts must not block a peer payment — PAID is terminal.
+  // Drop the pending outbox row so settle cannot be re-pushed over the paid bill.
+  if (await isPending(database, 'orders', id)) {
+    if (status !== 'PAID') {
+      return;
+    }
+    await database.runAsync('DELETE FROM sync_queue WHERE entity = ? AND entity_id = ?', ['orders', id]);
   }
 
   const local = await database.getFirstAsync<{
@@ -405,7 +426,7 @@ async function applyOrder(database: SQLiteDatabase, tenantId: string, order: Rec
     return;
   }
   const remoteVersion = orderVersion(order);
-  if (local?.status === 'OPEN' && localVersion(local) > remoteVersion) {
+  if (local?.status === 'OPEN' && status !== 'PAID' && localVersion(local) > remoteVersion) {
     return;
   }
 
@@ -524,7 +545,12 @@ async function applyTombstone(
       return;
     }
     if (entity === 'orders') {
-      await database.runAsync(`DELETE FROM orders WHERE id = ? AND tenant_id = ? AND status = 'OPEN'`, [entityId, tenantId]);
+      // OPEN orders with lines are blocked by a delete trigger unless lines go first.
+      await database.runAsync('DELETE FROM order_items WHERE order_id = ?', [entityId]);
+      await database.runAsync(`DELETE FROM orders WHERE id = ? AND tenant_id = ? AND status = 'OPEN'`, [
+        entityId,
+        tenantId,
+      ]);
     }
   });
 }
@@ -563,14 +589,13 @@ async function insertOrderLine(database: SQLiteDatabase, orderId: string, line: 
       : 'bar';
   await database.runAsync(
     `INSERT INTO order_items (
-       id, order_id, item_id, item_code, name_en, name_mr, liquor_type, service_station,
+       id, order_id, item_id, name_en, name_mr, liquor_type, service_station,
        volume_ml, quantity, unit_price
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       textField(line, 'id'),
       orderId,
       textField(line, 'item_id'),
-      textField(line, 'item_code'),
       textField(line, 'name_en'),
       textField(line, 'name_mr'),
       liquorType,

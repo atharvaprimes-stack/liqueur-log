@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 
 import { useAuth } from '../context/auth-context';
 import { listCatalogTerms, listStock } from '../data/repositories/inventoryRepository';
+import { scheduleBackgroundSync } from '../data/sync/engine';
 import { presentCatalogSheet } from '../domain/catalogSheet';
 import type { ReportSheet } from '../domain/reports';
 import type { StockItem } from '../domain/models/inventory';
@@ -54,7 +55,17 @@ export function useCatalogSheet(enabled: boolean): {
 
   useFocusEffect(
     useCallback(() => {
+      let active = true;
       void load();
+      void scheduleBackgroundSync().then((didFull) => {
+        if (active && didFull) {
+          return load();
+        }
+        return undefined;
+      });
+      return () => {
+        active = false;
+      };
     }, [load]),
   );
 

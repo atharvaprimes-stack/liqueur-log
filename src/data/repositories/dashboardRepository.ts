@@ -40,7 +40,6 @@ type StockRow = {
 
 type SellerRow = {
   item_id: string;
-  item_code: string;
   name_en: string;
   name_mr: string;
   quantity: number | null;
@@ -112,12 +111,12 @@ export async function loadDashboard(tenantId: string): Promise<DashboardSnapshot
       `SELECT
          COUNT(*) AS item_count,
          COALESCE(SUM(CASE
-           WHEN service_station <> 'kitchen'
+           WHEN tracks_stock = 1
             AND current_stock > 0
             AND current_stock <= low_stock_threshold
            THEN 1 ELSE 0 END), 0) AS low_count,
          COALESCE(SUM(CASE
-           WHEN service_station <> 'kitchen' AND current_stock = 0
+           WHEN tracks_stock = 1 AND current_stock = 0
            THEN 1 ELSE 0 END), 0) AS out_count
        FROM items
        WHERE tenant_id = ?`,
@@ -144,11 +143,10 @@ export async function loadDashboard(tenantId: string): Promise<DashboardSnapshot
     const topSellers = await database.getAllAsync<SellerRow>(
       `SELECT
          oi.item_id AS item_id,
-         MIN(oi.item_code) AS item_code,
          MIN(oi.name_en) AS name_en,
          MIN(oi.name_mr) AS name_mr,
          SUM(oi.quantity) AS quantity,
-         SUM(oi.quantity * oi.unit_price) AS amount
+         SUM(oi.quantity * ROUND(oi.unit_price * 100)) / 100.0 AS amount
        FROM order_items oi
        INNER JOIN orders o ON o.id = oi.order_id
        WHERE o.tenant_id = ? AND o.status = 'PAID' AND o.closed_at >= ? AND o.closed_at < ?
@@ -194,11 +192,13 @@ export async function loadDashboard(tenantId: string): Promise<DashboardSnapshot
        FROM orders o
        LEFT JOIN users u ON u.id = o.created_by
        WHERE o.tenant_id = ?
-         AND o.created_at >= ?
-         AND o.created_at < ?
-       ORDER BY o.created_at DESC
+         AND (
+           (o.status = 'PAID' AND o.closed_at >= ? AND o.closed_at < ?)
+           OR (o.status = 'OPEN' AND o.created_at >= ? AND o.created_at < ?)
+         )
+       ORDER BY COALESCE(o.closed_at, o.created_at) DESC
        LIMIT 5`,
-      [tenantId, today.start, today.end],
+      [tenantId, today.start, today.end, today.start, today.end],
     );
 
     return {
@@ -268,7 +268,6 @@ function count(value: number | null | undefined): number {
 function mapSeller(row: SellerRow): DashboardSeller {
   return {
     itemId: row.item_id,
-    itemCode: row.item_code,
     nameEn: row.name_en,
     nameMr: row.name_mr,
     quantity: count(row.quantity),

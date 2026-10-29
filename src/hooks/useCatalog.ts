@@ -16,6 +16,7 @@ import {
   updateVendor,
   type CatalogTermKind,
 } from '../data/repositories/inventoryRepository';
+import { scheduleBackgroundSync } from '../data/sync/engine';
 import { InventoryAccessError, type InventoryErrorCode } from '../domain/errors';
 import {
   type CatalogItemInput,
@@ -96,6 +97,13 @@ export function useCatalog(): {
             setIsLoading(false);
           }
         });
+
+      void scheduleBackgroundSync().then((didFull) => {
+        if (active && didFull) {
+          return reload();
+        }
+        return undefined;
+      });
 
       return () => {
         active = false;
@@ -204,12 +212,14 @@ export function useVendors(): { vendors: Vendor[]; isLoading: boolean } {
       }
 
       let active = true;
-      void listVendors(tenantId)
-        .then((next) => {
+      const loadLocal = () =>
+        listVendors(tenantId).then((next) => {
           if (active) {
             setVendors(next);
           }
-        })
+        });
+
+      void loadLocal()
         .catch(() => {
           if (active) {
             setVendors([]);
@@ -220,6 +230,13 @@ export function useVendors(): { vendors: Vendor[]; isLoading: boolean } {
             setIsLoading(false);
           }
         });
+
+      void scheduleBackgroundSync().then((didFull) => {
+        if (active && didFull) {
+          return loadLocal();
+        }
+        return undefined;
+      });
 
       return () => {
         active = false;

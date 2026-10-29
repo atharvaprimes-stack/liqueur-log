@@ -159,23 +159,6 @@ export function aggregateReceiptLines(lines: readonly ReceiptLine[]): ReceiptLin
   return [...grouped.values()];
 }
 
-/** Bar lines first, then kitchen — keeps bill sections stable for print and UI. */
-export function groupReceiptLinesByStation(lines: readonly ReceiptLine[]): {
-  bar: ReceiptLine[];
-  kitchen: ReceiptLine[];
-} {
-  const bar: ReceiptLine[] = [];
-  const kitchen: ReceiptLine[] = [];
-  for (const line of lines) {
-    if (line.station === 'kitchen') {
-      kitchen.push(line);
-    } else {
-      bar.push(line);
-    }
-  }
-  return { bar, kitchen };
-}
-
 export function formatReceiptAmount(amount: number): string {
   const paise = Math.round(amount * 100);
   const negative = paise < 0;
@@ -189,15 +172,14 @@ export function formatReceiptMath(quantity: number, unitPrice: number, pcs: stri
   return `${quantity} ${pcs} x ${formatReceiptAmount(unitPrice)}`;
 }
 
-export function receiptItemLabel(
-  name: string,
-  liquorType: string,
-  volumeMl: number,
-  station?: ServiceStation,
-): string {
+export function receiptItemLabel(name: string, volumeMl: number): string {
   const title = name.trim().replace(/\s+/g, ' ');
-  const kitchen = station === 'kitchen' || liquorType === 'Snacks';
-  const size = kitchen ? `${volumeMl}g` : `${volumeMl}ml`;
+  // Pack size 0/1 is a placeholder (e.g. roti) — omit from receipt text.
+  // Always label in ml (liquor, water, etc.); never append "g".
+  if (!Number.isFinite(volumeMl) || volumeMl <= 1) {
+    return title;
+  }
+  const size = `${volumeMl}ml`;
   return title ? `${title} ${size}` : size;
 }
 
@@ -236,8 +218,6 @@ export function buildReceipt(input: {
     thanks: string;
     poweredBy: string;
     pcs: string;
-    bar: string;
-    kitchen: string;
   };
 }): ReceiptPayload {
   const balancePaise = Math.max(Math.round(input.totalAmount * 100) - Math.round(input.paidAmount * 100), 0);
@@ -249,7 +229,6 @@ export function buildReceipt(input: {
   const place = input.heading.trim();
   const cashier = input.cashierName.trim();
   const address = (input.address ?? '').trim().replace(/\s+/g, ' ');
-  const sections = groupReceiptLinesByStation(input.lines);
   const rows = [center(input.businessName.toLocaleUpperCase())];
   if (address) {
     rows.push(center(address));
@@ -261,20 +240,12 @@ export function buildReceipt(input: {
     dash,
   );
 
-  const appendSection = (title: string, lines: ReceiptLine[]) => {
-    if (lines.length === 0) {
-      return;
-    }
-    rows.push(center(`· ${title.toLocaleUpperCase()} ·`));
-    for (const line of lines) {
-      rows.push(...wrapText(line.label));
-      rows.push(
-        pair(formatReceiptMath(line.quantity, line.unitPrice, input.labels.pcs), formatReceiptAmount(line.lineTotal)),
-      );
-    }
-  };
-  appendSection(input.labels.bar, sections.bar);
-  appendSection(input.labels.kitchen, sections.kitchen);
+  for (const line of input.lines) {
+    rows.push(...wrapText(line.label));
+    rows.push(
+      pair(formatReceiptMath(line.quantity, line.unitPrice, input.labels.pcs), formatReceiptAmount(line.lineTotal)),
+    );
+  }
 
   rows.push(equals, pair(input.labels.total, formatReceiptAmount(input.totalAmount)));
   if (input.isCredit) {

@@ -65,8 +65,8 @@ export default function StockScreen() {
 
   const sectionItems = useMemo(() => filterOrderSection(items, section), [items, section]);
   const statusFiltered = useMemo(
-    () => (section === 'bar' ? filterByStockStatus(sectionItems, statusFilter) : sectionItems),
-    [section, sectionItems, statusFilter],
+    () => filterByStockStatus(sectionItems, statusFilter),
+    [sectionItems, statusFilter],
   );
   const visibleItems = useMemo(
     () => sortOrderCatalog(filterStockEntrySearch(statusFiltered, search)),
@@ -118,15 +118,12 @@ export default function StockScreen() {
 
   const emptyKind: 'search' | 'filter' | 'catalog' = search.trim()
     ? 'search'
-    : section === 'bar' && statusFilter !== 'all'
+    : statusFilter !== 'all'
       ? 'filter'
       : 'catalog';
 
   const selectSection = (next: OrderCatalogSection) => {
     setSection(next);
-    if (next === 'kitchen') {
-      setStatusFilter('all');
-    }
   };
 
   return (
@@ -135,7 +132,7 @@ export default function StockScreen() {
         {items.length > 0 || isLoading ? (
           <View className="pb-3 pt-3">
             <View className="mx-4 flex-row rounded-lg border border-line bg-surface p-1">
-              {(['bar', 'kitchen'] as const).map((tab) => {
+              {(['kitchen', 'bar'] as const).map((tab) => {
                 const active = section === tab;
                 const count = tab === 'bar' ? sectionCounts.bar : sectionCounts.kitchen;
                 return (
@@ -201,23 +198,21 @@ export default function StockScreen() {
               </Pressable>
             </View>
 
-            {section === 'bar' ? (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                className="mt-3 max-h-12"
-                contentContainerClassName="items-center gap-2 px-4"
-              >
-                {STOCK_STATUS_FILTERS.map((entry) => (
-                  <StatusFilterChip
-                    key={entry}
-                    label={t(`stock.filters.${entry}`)}
-                    selected={statusFilter === entry}
-                    onPress={() => setStatusFilter(entry)}
-                  />
-                ))}
-              </ScrollView>
-            ) : null}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              className="mt-3 max-h-12"
+              contentContainerClassName="items-center gap-2 px-4"
+            >
+              {STOCK_STATUS_FILTERS.map((entry) => (
+                <StatusFilterChip
+                  key={entry}
+                  label={t(`stock.filters.${entry}`)}
+                  selected={statusFilter === entry}
+                  onPress={() => setStatusFilter(entry)}
+                />
+              ))}
+            </ScrollView>
           </View>
         ) : null}
 
@@ -366,7 +361,7 @@ function StockRow({
   const devanagari = language.startsWith('mr');
   const name = itemNames(item, language).primary;
   const volume = compactVolume(item);
-  const detail = `#${item.serialNo} · ${item.itemCode} · ${t(volume.key, volume.values)}`;
+  const detail = `#${item.serialNo} · ${t(volume.key, volume.values)}`;
   const stocked = tracksStock(item);
   const low = stocked && isLowStock(item);
   let status = '';

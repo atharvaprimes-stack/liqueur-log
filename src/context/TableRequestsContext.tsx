@@ -190,8 +190,11 @@ export function TableRequestsProvider({ children }: { children: ReactNode }) {
   const acceptRequest = useCallback(
     async (requestId: string) => {
       const ok = await updateTableRequestStatusRemote(requestId, 'accepted');
-      // Always clear from Incoming Requests after staff accepts into the cart.
-      patchLocalStatus([requestId], 'accepted');
+      // Only clear locally when the remote accept succeeds so another device
+      // cannot re-accept a request that is still pending on the server.
+      if (ok) {
+        patchLocalStatus([requestId], 'accepted');
+      }
       return ok;
     },
     [patchLocalStatus],
@@ -214,7 +217,9 @@ export function TableRequestsProvider({ children }: { children: ReactNode }) {
         return true;
       }
       const ok = await updateTableRequestsStatusBulkRemote(requestIds, 'accepted');
-      patchLocalStatus(requestIds, 'accepted');
+      if (ok) {
+        patchLocalStatus(requestIds, 'accepted');
+      }
       return ok;
     },
     [patchLocalStatus],

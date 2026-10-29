@@ -6,12 +6,19 @@ import { isDeviceOnline } from '../network';
 import { pullSyncSnapshot, pushSyncBatch } from '../remote/ledgerRemote';
 import { pushPendingUsers } from '../remote/syncStaff';
 import { isSupabaseConfigured } from '../remote/supabaseClient';
+import { emitLedgerUpdated } from './ledgerEvents';
 import { enqueueUpsert } from './outbox';
 import { applySnapshot } from './merge';
+import { broadcastLedgerChanged } from './peerNudge';
 import { textField, type SyncChange, type SyncSnapshot } from './snapshot';
 
-const CHUNK_SIZE = 80
-const RETRY_DELAY_MS = 4000;
+const CHUNK_SIZE = 80;
+/** Debounce before pushing local cart/table edits so rapid taps batch into one upload. */
+const RETRY_DELAY_MS = 1000;
+/** Coalesce rapid peer nudges into one pull. */
+const PEER_NUDGE_DEBOUNCE_MS = 400;
+/** Avoid stampedes of full snapshot pulls when many screens focus in a short window. */
+const BACKGROUND_FULL_SYNC_MIN_MS = 30_000;
 
 const UPSERT_PHASES = [
   ['item_types', 'item_strengths', 'vendors', 'items'],
@@ -25,43 +32,125 @@ const DELETE_ENTITIES = ['items', 'item_types', 'item_strengths', 'vendors', 'or
 const CATALOG_ENTITIES = ['item_types', 'item_strengths', 'vendors', 'items'] as const;
 
 let flushing: Promise<void> | null = null;
+let pendingFull = false;
+let pendingPush = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
+let peerNudgeTimer: ReturnType<typeof setTimeout> | null = null;
+let lastFullSyncAt = 0;
 
+function clearSyncTimer(): void {
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
+}
+
+/**
+ * Debounced outbox push only (no snapshot pull). Used after local mutations so
+ * the UI stays free of exclusive snapshot locks.
+ */
 export function requestSync(): void {
   if (!isSupabaseConfigured()) {
     return;
   }
-  if (timer) {
-    clearTimeout(timer);
-  }
+  clearSyncTimer();
   timer = setTimeout(() => {
     timer = null;
-    void syncNow();
+    void pushNow().catch(() => undefined);
   }, RETRY_DELAY_MS);
+}
+
+/** Upload pending local changes without pulling the tenant snapshot. */
+export function pushNow(): Promise<void> {
+  clearSyncTimer();
+  return enqueueSync('push');
 }
 
 /** Pushes local changes, then pulls the tenant snapshot. Safe to call repeatedly. */
 export function syncNow(): Promise<void> {
-  if (timer) {
-    clearTimeout(timer);
-    timer = null;
+  clearSyncTimer();
+  return enqueueSync('full');
+}
+
+/**
+ * Screen-focus friendly sync: full pull at most every 30s; otherwise just flush the outbox.
+ * Returns true when a full snapshot sync ran (callers may reload local UI afterward).
+ */
+export function scheduleBackgroundSync(options?: { force?: boolean }): Promise<boolean> {
+  if (!isSupabaseConfigured()) {
+    return Promise.resolve(false);
+  }
+  const now = Date.now();
+  if (!options?.force && now - lastFullSyncAt < BACKGROUND_FULL_SYNC_MIN_MS) {
+    requestSync();
+    return Promise.resolve(false);
+  }
+  return syncNow()
+    .then(() => true)
+    .catch(() => false);
+}
+
+/**
+ * Peer device signaled a ledger change. Pull in the background (debounced).
+ * Does nothing meaningful offline — local SQLite remains the source of truth.
+ */
+export function syncAfterPeerNudge(): void {
+  if (!isSupabaseConfigured()) {
+    return;
+  }
+  if (peerNudgeTimer) {
+    clearTimeout(peerNudgeTimer);
+  }
+  peerNudgeTimer = setTimeout(() => {
+    peerNudgeTimer = null;
+    void syncNow()
+      .then(() => {
+        emitLedgerUpdated();
+      })
+      .catch(() => undefined);
+  }, PEER_NUDGE_DEBOUNCE_MS);
+}
+
+function enqueueSync(mode: 'push' | 'full'): Promise<void> {
+  if (mode === 'full') {
+    pendingFull = true;
+  } else {
+    pendingPush = true;
   }
   if (!flushing) {
-    flushing = runSync().finally(() => {
+    flushing = (async () => {
+      for (;;) {
+        const doFull = pendingFull;
+        pendingFull = false;
+        pendingPush = false;
+        if (doFull) {
+          await runSync();
+        } else {
+          await runPush();
+        }
+        if (!pendingFull && !pendingPush) {
+          break;
+        }
+      }
+    })().finally(() => {
       flushing = null;
     });
   }
   return flushing;
 }
 
-async function runSync(): Promise<void> {
+async function resolveSyncTenant(): Promise<{
+  mobileNumber: string;
+  mpin: string;
+  tenantId: string;
+} | null> {
   const credentials = getSessionCredentials();
   if (!credentials) {
     console.warn('[sync] skipped: no session credentials (re-login required)');
-    return;
+    return null;
   }
   if (!isSupabaseConfigured() || !(await isDeviceOnline())) {
-    return;
+    return null;
   }
 
   const tenantId = await withDatabase(async (database) => {
@@ -71,7 +160,7 @@ async function runSync(): Promise<void> {
     return session?.tenant_id ?? null;
   });
   if (!tenantId) {
-    return;
+    return null;
   }
 
   await withDatabase(async (database) => {
@@ -79,21 +168,71 @@ async function runSync(): Promise<void> {
     await queueUnacked(database, tenantId);
   });
 
+  return { mobileNumber: credentials.mobileNumber, mpin: credentials.mpin, tenantId };
+}
+
+async function pushOutbox(
+  mobileNumber: string,
+  mpin: string,
+  tenantId: string,
+): Promise<{ ok: boolean; pushed: number }> {
   const usersReady = await pushPendingUsers();
   if (!usersReady) {
-    await pullTenant(credentials.mobileNumber, credentials.mpin, tenantId);
+    return { ok: false, pushed: 0 };
+  }
+  let pushed = 0;
+  for (const entities of UPSERT_PHASES) {
+    const phase = await pushPhase(mobileNumber, mpin, tenantId, entities, 'upsert');
+    if (!phase.ok) {
+      return { ok: false, pushed };
+    }
+    pushed += phase.pushed;
+  }
+  const deleted = await pushPhase(mobileNumber, mpin, tenantId, DELETE_ENTITIES, 'delete');
+  if (!deleted.ok) {
+    return { ok: false, pushed };
+  }
+  return { ok: true, pushed: pushed + deleted.pushed };
+}
+
+function notifyPeersIfPushed(tenantId: string, pushed: number): void {
+  if (pushed > 0) {
+    broadcastLedgerChanged(tenantId);
+  }
+}
+
+async function runPush(): Promise<void> {
+  const ctx = await resolveSyncTenant();
+  if (!ctx) {
+    return;
+  }
+  const result = await pushOutbox(ctx.mobileNumber, ctx.mpin, ctx.tenantId);
+  if (result.ok) {
+    notifyPeersIfPushed(ctx.tenantId, result.pushed);
+  }
+}
+
+async function runSync(): Promise<void> {
+  const ctx = await resolveSyncTenant();
+  if (!ctx) {
     return;
   }
 
-  for (const entities of UPSERT_PHASES) {
-    await pushPhase(credentials.mobileNumber, credentials.mpin, tenantId, entities, 'upsert');
+  const pushed = await pushOutbox(ctx.mobileNumber, ctx.mpin, ctx.tenantId);
+  if (!pushed.ok) {
+    await pullTenant(ctx.mobileNumber, ctx.mpin, ctx.tenantId);
+    return;
   }
-  await pushPhase(credentials.mobileNumber, credentials.mpin, tenantId, DELETE_ENTITIES, 'delete');
-  const requeued = await pullTenant(credentials.mobileNumber, credentials.mpin, tenantId);
+  notifyPeersIfPushed(ctx.tenantId, pushed.pushed);
+
+  const requeued = await pullTenant(ctx.mobileNumber, ctx.mpin, ctx.tenantId);
   // Rows false-acked before the server fix need a second push after re-queue.
   if (requeued > 0) {
-    await pushPhase(credentials.mobileNumber, credentials.mpin, tenantId, CATALOG_ENTITIES, 'upsert');
-    await pullTenant(credentials.mobileNumber, credentials.mpin, tenantId);
+    const catalog = await pushPhase(ctx.mobileNumber, ctx.mpin, ctx.tenantId, CATALOG_ENTITIES, 'upsert');
+    if (catalog.ok) {
+      notifyPeersIfPushed(ctx.tenantId, catalog.pushed);
+    }
+    await pullTenant(ctx.mobileNumber, ctx.mpin, ctx.tenantId);
   }
 }
 
@@ -102,10 +241,13 @@ async function pullTenant(mobileNumber: string, mpin: string, tenantId: string):
   if (!snapshot) {
     return 0;
   }
-  return withLockedTransaction(async (database) => {
+  const requeued = await withLockedTransaction(async (database) => {
     await applySnapshot(database, tenantId, snapshot);
     return requeueCatalogMissingFromRemote(database, tenantId, snapshot);
   });
+  // Stamp cooldown only after a successful snapshot apply, not when sync is scheduled.
+  lastFullSyncAt = Date.now();
+  return requeued;
 }
 
 /**
@@ -148,25 +290,28 @@ async function pushPhase(
   tenantId: string,
   entities: readonly string[],
   operation: 'upsert' | 'delete',
-): Promise<boolean> {
+): Promise<{ ok: boolean; pushed: number }> {
+  let pushed = 0;
   for (let pass = 0; pass < 100; pass += 1) {
     const changes = await withDatabase((database) => loadChanges(database, tenantId, entities, operation));
     if (changes.length === 0) {
-      return true;
+      return { ok: true, pushed };
     }
     const acked = await pushSyncBatch(mobileNumber, mpin, changes);
     if (!acked) {
-      return false;
+      return { ok: false, pushed };
     }
     if (acked.length === 0) {
-      return false;
+      return { ok: false, pushed };
     }
     const accepted = new Set(acked);
+    let acceptedCount = 0;
     await withLockedTransaction(async (database) => {
       for (const change of changes) {
         if (!accepted.has(change.queue_id)) {
           continue;
         }
+        acceptedCount += 1;
         await database.runAsync('DELETE FROM sync_queue WHERE id = ?', [change.queue_id]);
         await database.runAsync(
           'INSERT INTO sync_acks (entity, entity_id) VALUES (?, ?) ON CONFLICT(entity, entity_id) DO NOTHING',
@@ -174,8 +319,9 @@ async function pushPhase(
         );
       }
     });
+    pushed += acceptedCount;
   }
-  return false;
+  return { ok: false, pushed };
 }
 
 async function loadChanges(
@@ -262,7 +408,7 @@ async function readRecord(
       return null;
     }
     order.lines = await database.getAllAsync(
-      `SELECT id, order_id, item_id, item_code, name_en, name_mr, liquor_type, service_station,
+      `SELECT id, order_id, item_id, name_en, name_mr, liquor_type, service_station,
               volume_ml, quantity, unit_price
        FROM order_items WHERE order_id = ?`,
       [entityId],
@@ -271,8 +417,9 @@ async function readRecord(
   }
 
   const tables: Record<string, string> = {
-    items: `SELECT id, tenant_id, serial_no, item_code, name_en, name_mr, brand, liquor_type, sub_type,
-              service_station, volume_ml, purchase_price, selling_price, low_stock_threshold, updated_at
+    items: `SELECT id, tenant_id, serial_no, name_en, name_mr, brand, liquor_type, sub_type,
+              service_station, show_in_bar, show_in_kitchen, tracks_stock,
+              volume_ml, purchase_price, selling_price, low_stock_threshold, updated_at
        FROM items WHERE id = ? AND tenant_id = ?`,
     item_types: 'SELECT id, tenant_id, name, sort_order, updated_at FROM item_types WHERE id = ? AND tenant_id = ?',
     item_strengths:

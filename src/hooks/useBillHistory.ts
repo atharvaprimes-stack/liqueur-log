@@ -3,6 +3,7 @@ import { useFocusEffect } from 'expo-router';
 
 import { useAuth } from '../context/auth-context';
 import { searchClosedOrders } from '../data/repositories/orderRepository';
+import { scheduleBackgroundSync } from '../data/sync/engine';
 import type { OrderErrorCode } from '../domain/errors';
 import type { OrderSummary } from '../domain/models/orders';
 
@@ -26,13 +27,15 @@ export function useBillHistory(query: string): {
       }
 
       let active = true;
-      void searchClosedOrders(tenantId, query)
-        .then((next) => {
+      const loadLocal = () =>
+        searchClosedOrders(tenantId, query).then((next) => {
           if (active) {
             setOrders(next);
             setErrorCode(null);
           }
-        })
+        });
+
+      void loadLocal()
         .catch(() => {
           if (active) {
             setErrorCode('unknown');
@@ -43,6 +46,13 @@ export function useBillHistory(query: string): {
             setIsLoading(false);
           }
         });
+
+      void scheduleBackgroundSync().then((didFull) => {
+        if (active && didFull) {
+          return loadLocal();
+        }
+        return undefined;
+      });
 
       return () => {
         active = false;

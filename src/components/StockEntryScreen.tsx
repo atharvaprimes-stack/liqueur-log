@@ -541,7 +541,7 @@ function ItemTableRow({
     <View className={`flex-row items-center gap-2 px-3 py-2.5 ${showDivider ? 'border-b border-line' : ''}`}>
       <View className="min-w-0 flex-[1.6] justify-center">
         <Text className="text-sm font-bold text-ink" numberOfLines={1}>
-          {item.itemCode}
+          #{item.serialNo}
         </Text>
       </View>
       <TextInput

@@ -68,24 +68,24 @@ CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY NOT NULL,
   tenant_id TEXT NOT NULL,
   serial_no INTEGER NOT NULL DEFAULT 0 CHECK (serial_no >= 0),
-  item_code TEXT NOT NULL,
   name_en TEXT NOT NULL,
   name_mr TEXT NOT NULL,
   brand TEXT NOT NULL,
   liquor_type TEXT NOT NULL,
   sub_type TEXT NOT NULL,
   service_station TEXT NOT NULL DEFAULT 'bar' CHECK (service_station IN ('bar', 'kitchen')),
+  show_in_bar INTEGER NOT NULL DEFAULT 1 CHECK (show_in_bar IN (0, 1)),
+  show_in_kitchen INTEGER NOT NULL DEFAULT 0 CHECK (show_in_kitchen IN (0, 1)),
+  tracks_stock INTEGER NOT NULL DEFAULT 1 CHECK (tracks_stock IN (0, 1)),
   volume_ml INTEGER NOT NULL CHECK (volume_ml > 0),
   purchase_price REAL NOT NULL CHECK (purchase_price >= 0),
   selling_price REAL NOT NULL CHECK (selling_price >= 0),
   current_stock INTEGER NOT NULL DEFAULT 0 CHECK (current_stock >= 0),
   low_stock_threshold INTEGER NOT NULL DEFAULT 0 CHECK (low_stock_threshold >= 0),
   updated_at INTEGER NOT NULL DEFAULT 0,
+  CHECK (show_in_bar + show_in_kitchen >= 1),
   FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS items_tenant_item_code_idx
-  ON items (tenant_id, item_code);
 
 CREATE TABLE IF NOT EXISTS item_types (
   id TEXT PRIMARY KEY NOT NULL,
@@ -289,7 +289,6 @@ CREATE TABLE IF NOT EXISTS order_items (
   id TEXT PRIMARY KEY NOT NULL,
   order_id TEXT NOT NULL,
   item_id TEXT NOT NULL,
-  item_code TEXT NOT NULL,
   name_en TEXT NOT NULL,
   name_mr TEXT NOT NULL,
   liquor_type TEXT NOT NULL,

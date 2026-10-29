@@ -4,7 +4,6 @@ import {
   formatBillStamp,
   formatReceiptAmount,
   formatReceiptMath,
-  groupReceiptLinesByStation,
   type ReceiptLine,
   type ReceiptPayload,
 } from '../domain/billing';
@@ -33,7 +32,6 @@ export function ThermalReceipt({
   const type = variant === 'print' ? printTypeScale(printFontSize, printPaperWidth) : PREVIEW_TYPE;
   const dash = '-'.repeat(type.dashLen);
   const equals = '='.repeat(type.dashLen);
-  const sections = groupReceiptLinesByStation(receipt.lines);
   const slipWidth =
     Platform.OS === 'web' && variant === 'preview'
       ? ({ width: '58mm' as unknown as number, maxWidth: '100%' as const })
@@ -65,8 +63,7 @@ export function ThermalReceipt({
         type={type}
       />
       <Rule glyph={dash} type={type} />
-      <ReceiptSection title={copy.bar} lines={sections.bar} pcs={copy.pcs} type={type} />
-      <ReceiptSection title={copy.kitchen} lines={sections.kitchen} pcs={copy.pcs} type={type} />
+      <ReceiptLines lines={receipt.lines} pcs={copy.pcs} type={type} />
       <Rule glyph={equals} type={type} />
       <AmountRow label={copy.total} amount={receipt.totalAmount} emphasis type={type} />
       {receipt.isCredit ? (
@@ -84,14 +81,12 @@ export function ThermalReceipt({
   );
 }
 
-function ReceiptSection({
-  title,
+function ReceiptLines({
   lines,
   pcs,
   type,
 }: {
-  title: string;
-  lines: ReceiptLine[];
+  lines: readonly ReceiptLine[];
   pcs: string;
   type: TypeScale;
 }) {
@@ -100,11 +95,8 @@ function ReceiptSection({
   }
   return (
     <>
-      <Text className={`mt-2 text-center uppercase tracking-widest leading-tight text-black ${type.section}`}>
-        {`· ${title} ·`}
-      </Text>
       {lines.map((line, index) => (
-        <View key={`${title}-${line.label}-${index}`} className="mt-2">
+        <View key={`${line.label}-${index}`} className="mt-2">
           <Text className={`font-bold leading-tight text-black ${type.line}`}>{line.label}</Text>
           <View className="mt-0.5 flex-row items-start justify-between gap-2">
             <Text className={`min-w-0 flex-1 leading-tight text-black ${type.line}`}>

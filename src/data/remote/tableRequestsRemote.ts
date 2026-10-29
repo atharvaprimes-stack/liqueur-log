@@ -78,7 +78,6 @@ export function parseTableRequest(raw: unknown): TableRequest | null {
     tenantId,
     tableId: normalizeTableId(tableIdRaw),
     itemId,
-    itemCode: typeof row.item_code === 'string' ? row.item_code : '',
     nameEn: typeof row.name_en === 'string' ? row.name_en : '',
     nameMr: typeof row.name_mr === 'string' ? row.name_mr : '',
     quantity: Math.trunc(quantity),

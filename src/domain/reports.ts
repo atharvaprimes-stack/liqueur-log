@@ -12,7 +12,6 @@ export type ReportBounds = {
 export type MovementRow = {
   day: string;
   itemId: string;
-  itemCode: string;
   nameEn: string;
   nameMr: string;
   liquorType: string;
@@ -56,7 +55,6 @@ export type ReportSource = {
 
 export type ReportItem = {
   itemId: string;
-  itemCode: string;
   nameEn: string;
   nameMr: string;
   liquorType: string;
@@ -97,7 +95,6 @@ export type PurchaseDay = {
 
 export type StockReportItem = {
   itemId: string;
-  itemCode: string;
   nameEn: string;
   nameMr: string;
   liquorType: string;
@@ -156,6 +153,12 @@ export type SheetTone = 'danger' | 'muted';
 export type SheetCell = {
   text: string;
   tone?: SheetTone;
+  /** First row of a vertical merge — label spans this many body rows. */
+  rowSpan?: number;
+  /** Continuation row under a merged cell (no label; PDF skips the top rule in this column). */
+  mergeContinue?: boolean;
+  /** Wrap onto following rows of a merge (one wrapped line per body row). */
+  wrap?: boolean;
 };
 
 export type SheetColumn = {
@@ -174,6 +177,8 @@ export type SheetGroup = {
   note: string | null;
   bands: SheetBand[];
   total: SheetCell[] | null;
+  /** When true, PDF painter starts this group on a fresh page (e.g. catalog stations). */
+  breakBefore?: boolean;
 };
 
 export type SheetTable = {
@@ -183,6 +188,17 @@ export type SheetTable = {
   extra: SheetCell[] | null;
   grand: SheetCell[] | null;
   empty: string | null;
+  /** When true, each group title is painted above its column header (catalog stations). */
+  sectionPerGroup?: boolean;
+  /**
+   * Side-by-side item strips. `columns` describe one strip; widths are fractions within that strip.
+   * Fill order is controlled by `flowFill` (default row-wise).
+   */
+  flowColumns?: number;
+  /** How to place items across flow strips. Default `row` (left→right, then next line). */
+  flowFill?: 'row' | 'column';
+  /** PDF table type scale (1 = default, 2 = double). */
+  typeScale?: number;
 };
 
 export type SummaryPair = {
@@ -671,7 +687,7 @@ function rateLabel(line: ReportItem): string {
 }
 
 function sortByName<
-  T extends { nameEn: string; nameMr: string; volumeMl: number; itemCode: string; staffName?: string },
+  T extends { nameEn: string; nameMr: string; volumeMl: number; staffName?: string },
 >(lines: T[], language: string): T[] {
   return [...lines].sort((left, right) => {
     const leftName = itemNames(left, language).primary;
@@ -679,16 +695,13 @@ function sortByName<
     return (
       leftName.localeCompare(rightName, language, { sensitivity: 'base' }) ||
       left.volumeMl - right.volumeMl ||
-      left.itemCode.localeCompare(right.itemCode) ||
       (left.staffName ?? '').localeCompare(right.staffName ?? '', language, { sensitivity: 'base' })
     );
   });
 }
 
-function itemCell(item: { itemCode: string; nameEn: string; nameMr: string }, language: string): SheetCell {
-  const name = itemNames(item, language).primary.trim();
-  const code = item.itemCode.trim();
-  return { text: name && code ? `${code}  ${name}` : name || code };
+function itemCell(item: { nameEn: string; nameMr: string }, language: string): SheetCell {
+  return { text: itemNames(item, language).primary.trim() };
 }
 
 function volumeLabel(item: { volumeMl: number; liquorType: string }, t: Translate): string {
@@ -759,7 +772,6 @@ function buildStock(source: ReportSource): BusinessReport['stock'] {
     const low = isLowStock(item);
     lines.push({
       itemId: item.id,
-      itemCode: item.itemCode,
       nameEn: item.nameEn,
       nameMr: item.nameMr,
       liquorType: item.liquorType,
@@ -911,12 +923,11 @@ function mergeMovement(rows: MovementRow[]): ReportItem[] {
     const quantity = Number.isFinite(row.quantity) ? row.quantity : 0;
     const amountPaise = rupeesToPaise(row.amount);
     const staffName = row.staffName.trim();
-    const key = `${row.itemId}\u0000${row.itemCode}\u0000${row.nameEn}\u0000${row.nameMr}\u0000${row.volumeMl}\u0000${row.unitPaise}\u0000${staffName}`;
+    const key = `${row.itemId}\u0000${row.nameEn}\u0000${row.nameMr}\u0000${row.volumeMl}\u0000${row.unitPaise}\u0000${staffName}`;
     const existing = merged.get(key);
     if (!existing) {
       merged.set(key, {
         itemId: row.itemId,
-        itemCode: row.itemCode,
         nameEn: row.nameEn,
         nameMr: row.nameMr,
         liquorType: row.liquorType,

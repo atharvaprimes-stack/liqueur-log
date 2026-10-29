@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  Keyboard,
   Pressable,
   Text,
   TextInput,
@@ -17,6 +18,9 @@ import { useAuth } from '../../src/context/AuthContext';
 import { AuthError } from '../../src/domain/errors';
 import { useTheme } from '../../src/theme/theme-context';
 
+/** Ignore taps that land on Login when Android dismisses the number pad. */
+const SUBMIT_ARM_MS = 350;
+
 export default function LoginScreen() {
   const { t } = useTranslation();
   const { height, width } = useWindowDimensions();
@@ -28,21 +32,35 @@ export default function LoginScreen() {
   const [mpin, setMpin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [submitArmed, setSubmitArmed] = useState(false);
   const submittingRef = useRef(false);
-  const canSubmit = mobileNumber.length === 10 && mpin.length === 4 && !submitting;
+  const fieldsReady = mobileNumber.length === 10 && mpin.length === 4;
+  const canSubmit = fieldsReady && submitArmed && !submitting;
+
+  useEffect(() => {
+    if (!fieldsReady) {
+      setSubmitArmed(false);
+      return;
+    }
+    // Android number-pad often fires a ghost press (or onSubmitEditing) on the
+    // 4th PIN digit when maxLength is hit — wait before accepting Login taps.
+    const timer = setTimeout(() => setSubmitArmed(true), SUBMIT_ARM_MS);
+    return () => clearTimeout(timer);
+  }, [fieldsReady]);
 
   if (isReady && currentUser) {
     return <Redirect href="/home" />;
   }
 
   const submit = async () => {
-    if (submittingRef.current || mobileNumber.length !== 10 || mpin.length !== 4) {
+    if (submittingRef.current || !fieldsReady || !submitArmed) {
       return;
     }
 
     submittingRef.current = true;
     setSubmitting(true);
     setError(null);
+    Keyboard.dismiss();
     try {
       await login(mobileNumber, mpin);
     } catch (loginError) {
@@ -102,14 +120,15 @@ export default function LoginScreen() {
             placeholderTextColor={palette.muted}
             keyboardType="number-pad"
             inputMode="numeric"
-            autoComplete="password"
-            textContentType="password"
+            autoComplete="off"
+            textContentType="none"
+            importantForAutofill="no"
             secureTextEntry
             maxLength={4}
             editable={!submitting}
-            onSubmitEditing={() => {
-              void submit();
-            }}
+            // number-pad has no return key; do not auto-login on maxLength /
+            // IME submit — Android OEMs often fire that when the 4th digit lands.
+            blurOnSubmit
             className={`min-h-14 rounded-xl border bg-canvas px-4 text-base text-ink ${
               error ? 'border-danger' : 'border-line'
             }`}

@@ -2,7 +2,6 @@ import type { OrderStatus, OrderType } from './orders';
 
 export type DashboardSeller = {
   itemId: string;
-  itemCode: string;
   nameEn: string;
   nameMr: string;
   quantity: number;
