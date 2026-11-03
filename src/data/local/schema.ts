@@ -213,7 +213,9 @@ CREATE TABLE IF NOT EXISTS orders (
   status TEXT NOT NULL CHECK (status IN ('OPEN', 'PAID')),
   total_amount REAL NOT NULL CHECK (total_amount >= 0),
   paid_amount REAL NOT NULL CHECK (paid_amount >= 0),
-  payment_method TEXT CHECK (payment_method IN ('Cash', 'UPI', 'Other')),
+  cash_amount REAL NOT NULL DEFAULT 0 CHECK (cash_amount >= 0),
+  upi_amount REAL NOT NULL DEFAULT 0 CHECK (upi_amount >= 0),
+  payment_method TEXT CHECK (payment_method IN ('Cash', 'UPI', 'Split', 'Other')),
   is_credit INTEGER NOT NULL DEFAULT 0 CHECK (is_credit IN (0, 1)),
   order_sequence_string TEXT NOT NULL,
   created_at INTEGER NOT NULL,
@@ -230,6 +232,8 @@ CREATE TABLE IF NOT EXISTS orders (
       status = 'OPEN'
       AND payment_method IS NULL
       AND paid_amount = 0
+      AND cash_amount = 0
+      AND upi_amount = 0
       AND closed_at IS NULL
       AND is_credit = 0
     )
@@ -238,6 +242,10 @@ CREATE TABLE IF NOT EXISTS orders (
       AND payment_method IS NOT NULL
       AND closed_at IS NOT NULL
       AND is_credit = CASE WHEN paid_amount < total_amount THEN 1 ELSE 0 END
+      AND (
+        payment_method = 'Other'
+        OR paid_amount = cash_amount + upi_amount
+      )
     )
   ),
   FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE,

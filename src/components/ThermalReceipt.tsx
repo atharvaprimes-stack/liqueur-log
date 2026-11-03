@@ -69,14 +69,16 @@ export function ThermalReceipt({
       <ReceiptSection title={copy.kitchen} lines={sections.kitchen} pcs={copy.pcs} type={type} />
       <Rule glyph={equals} type={type} />
       <AmountRow label={copy.total} amount={receipt.totalAmount} emphasis type={type} />
-      {receipt.isCredit ? (
-        <>
-          <AmountRow label={receipt.paymentLabel} amount={receipt.paidAmount} type={type} />
-          <AmountRow label={copy.credit} amount={receipt.balanceAmount} type={type} />
-        </>
-      ) : (
-        <Meta type={type}>{receipt.paymentLabel}</Meta>
-      )}
+      {receipt.paymentLabel.trim() ? (
+        receipt.isCredit ? (
+          <>
+            <AmountRow label={receipt.paymentLabel} amount={receipt.paidAmount} type={type} />
+            <AmountRow label={copy.credit} amount={receipt.balanceAmount} type={type} />
+          </>
+        ) : (
+          <Meta type={type}>{receipt.paymentLabel}</Meta>
+        )
+      ) : null}
       <Rule glyph={dash} type={type} />
       <Text className={`text-center leading-tight text-black ${type.thanks}`}>{copy.thanks}</Text>
       <Text className={`mt-1 text-center leading-tight text-black ${type.powered}`}>{copy.poweredBy}</Text>

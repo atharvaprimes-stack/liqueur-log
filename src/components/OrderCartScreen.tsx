@@ -25,7 +25,7 @@ import {
   type OrderCatalogSection,
   type StockItem,
 } from '../domain/models/inventory';
-import { balancePaise, type OrderLine, type PaymentMethod } from '../domain/models/orders';
+import { balancePaise, type OrderLine } from '../domain/models/orders';
 import type { TableRequest } from '../domain/models/tableRequests';
 import { useBilling } from '../hooks/useBilling';
 import { useOrderCart, type CartTarget } from '../hooks/useOrderCart';
@@ -34,7 +34,6 @@ import { useVoiceSearch } from '../hooks/useVoiceSearch';
 import { useAuth } from '../context/AuthContext';
 import { useBottomInset } from '../navigation/bottomInset';
 import { leaveScreen } from '../navigation/leave';
-import { afterModalDismissed } from '../printing/receiptFile';
 import { useTheme } from '../theme/theme-context';
 import { ActionRow } from './FormActions';
 import { PaymentSheet } from './PaymentSheet';
@@ -230,13 +229,31 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
     leaveScreen(parent);
   }, [cart, order, parent, tableRequests]);
 
-  const onPayAndClose = useCallback(() => {
+  const onCloseOrder = useCallback(() => {
     if (!order || order.lines.length === 0) {
       return;
     }
     billing.clearError();
     setShareNotice(null);
     setPaymentOpen(true);
+  }, [billing, order]);
+
+  const onPrintOpenBill = useCallback(() => {
+    if (!order || order.lines.length === 0 || billing.isSubmitting) {
+      return;
+    }
+    const preview = billing.draftReceiptPreview(order);
+    if (!preview) {
+      setShareNotice('printFailed');
+      return;
+    }
+    void (async () => {
+      setShareNotice(null);
+      const ok = await billing.printPreview(preview);
+      if (!ok) {
+        setShareNotice('printFailed');
+      }
+    })();
   }, [billing, order]);
 
   const onSearchSubmit = async () => {
@@ -261,7 +278,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
     setFormError('code');
   };
 
-  const onCollect = async (payment: { method: PaymentMethod; paidAmount: number }) => {
+  const onCollect = async (payment: { cashAmount: number; upiAmount: number }) => {
     if (!order) {
       return;
     }
@@ -354,12 +371,6 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
     }
   }, [busy, cart, editable, pendingRequests, pulseLine, requestBusyId, tableRequests]);
 
-  const buildDraftPreview = billing.draftReceiptPreview;
-  const draftPreview = useCallback(
-    (method: PaymentMethod) => (order ? buildDraftPreview(order, method) : null),
-    [buildDraftPreview, order],
-  );
-
   if (!isReady) {
     return null;
   }
@@ -418,7 +429,16 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                   <Text className="text-sm font-semibold text-ink">{t('billing.closed')}</Text>
                   <Text className="mt-1 text-sm text-muted">
                     {t('billing.paid')} {formatInr(order.paidAmount)}
-                    {order.paymentMethod ? ` · ${t(`billing.methods.${order.paymentMethod}`)}` : ''}
+                    {order.paymentMethod === 'Split'
+                      ? ` · ${t('billing.methods.splitDetail', {
+                          cashLabel: t('billing.methods.Cash'),
+                          cashAmount: formatInr(order.cashAmount),
+                          upiLabel: t('billing.methods.UPI'),
+                          upiAmount: formatInr(order.upiAmount),
+                        })}`
+                      : order.paymentMethod
+                        ? ` · ${t(`billing.methods.${order.paymentMethod}`)}`
+                        : ''}
                   </Text>
                   {order.isCredit ? (
                     <Text className="mt-1 text-sm font-semibold text-danger">
@@ -607,27 +627,42 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
             style={{ paddingBottom: bottomInset + 12 }}
           >
             {editable ? (
-              <View className="flex-row gap-3">
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={busy}
-                  onPress={onCancel}
-                  className="h-12 min-w-0 flex-1 items-center justify-center rounded-lg border border-line bg-canvas px-2 disabled:opacity-50"
-                >
-                  <Text className="text-center text-sm font-semibold text-muted" numberOfLines={1}>
-                    {t('common.cancel')}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={busy || displayLines.length === 0}
-                  onPress={onPayAndClose}
-                  className="h-12 min-w-0 flex-1 items-center justify-center rounded-lg bg-accent px-2 disabled:opacity-50"
-                >
-                  <Text className="text-center text-sm font-semibold text-accent-ink" numberOfLines={1}>
-                    {t('billing.payClose')}
-                  </Text>
-                </Pressable>
+              <View className="gap-2">
+                {shareNotice === 'printFailed' ? (
+                  <Text className="text-center text-sm text-danger">{t('billing.printFailed')}</Text>
+                ) : null}
+                <View className="flex-row gap-2">
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={busy}
+                    onPress={onCancel}
+                    className="h-12 min-w-0 flex-1 items-center justify-center rounded-lg border border-line bg-canvas px-2 disabled:opacity-50"
+                  >
+                    <Text className="text-center text-sm font-semibold text-muted" numberOfLines={1}>
+                      {t('common.cancel')}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={busy || billing.isSubmitting || displayLines.length === 0}
+                    onPress={onPrintOpenBill}
+                    className="h-12 min-w-0 flex-1 items-center justify-center rounded-lg border border-line bg-canvas px-2 disabled:opacity-50"
+                  >
+                    <Text className="text-center text-sm font-semibold text-ink" numberOfLines={1}>
+                      {t('billing.print')}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={busy || displayLines.length === 0}
+                    onPress={onCloseOrder}
+                    className="h-12 min-w-0 flex-1 items-center justify-center rounded-lg bg-accent px-2 disabled:opacity-50"
+                  >
+                    <Text className="text-center text-sm font-semibold text-accent-ink" numberOfLines={1}>
+                      {t('billing.closeOrder')}
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
             ) : (
               <View>
@@ -673,33 +708,13 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
             order={order}
             submitting={billing.isSubmitting}
             errorCode={billing.errorCode}
-            shareNotice={shareNotice === 'printFailed' ? 'printFailed' : null}
-            draftPreview={draftPreview}
             onClose={() => {
               if (!billing.isSubmitting) {
                 setPaymentOpen(false);
-                setShareNotice(null);
               }
             }}
             onSubmit={(payment) => {
               void onCollect(payment);
-            }}
-            onPrint={(preview, payment) => {
-              void (async () => {
-                setShareNotice(null);
-                // Native PrintManager sits under RN Modal; Android resolves as soon as
-                // the dialog opens, so keep the sheet closed afterward.
-                setPaymentOpen(false);
-                await afterModalDismissed();
-                const ok = await billing.printPreview(preview);
-                if (!ok) {
-                  setPaymentOpen(true);
-                  setShareNotice('printFailed');
-                  return;
-                }
-                // Successful bill print settles the order (counter + table).
-                await onCollect(payment);
-              })();
             }}
           />
 

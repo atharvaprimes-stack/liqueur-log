@@ -5,8 +5,8 @@ import {
   Modal,
   Platform,
   Pressable,
-  ScrollView,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -14,34 +14,18 @@ import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { OrderErrorCode } from '../domain/errors';
-import { formatInr } from '../domain/money';
-import type { PaymentMethod, SaleOrder } from '../domain/models/orders';
-import type { BillPreview } from '../hooks/useBilling';
+import { formatInr, formatRupeeInput, parseRupeeToPaise, sanitizeRupeeInput } from '../domain/money';
+import { deriveSettlement, type SaleOrder } from '../domain/models/orders';
 import { resolveBottomInset } from '../navigation/bottomInset';
 import { useTheme } from '../theme/theme-context';
-import { ThermalReceipt } from './ThermalReceipt';
-
-const COLLECT_METHODS = ['Cash', 'UPI'] as const;
-type CollectMethod = (typeof COLLECT_METHODS)[number];
-
-const METHOD_ICONS: Record<CollectMethod, keyof typeof Ionicons.glyphMap> = {
-  Cash: 'cash-outline',
-  UPI: 'qr-code-outline',
-};
 
 type PaymentSheetProps = {
   visible: boolean;
   order: SaleOrder;
   submitting: boolean;
   errorCode: OrderErrorCode | null;
-  shareNotice: 'printFailed' | null;
-  draftPreview: (method: PaymentMethod) => BillPreview | null;
   onClose: () => void;
-  onSubmit: (payment: { method: PaymentMethod; paidAmount: number }) => void;
-  onPrint: (
-    preview: BillPreview,
-    payment: { method: PaymentMethod; paidAmount: number },
-  ) => void;
+  onSubmit: (payment: { cashAmount: number; upiAmount: number }) => void;
 };
 
 export function PaymentSheet({
@@ -49,122 +33,143 @@ export function PaymentSheet({
   order,
   submitting,
   errorCode,
-  shareNotice,
-  draftPreview,
   onClose,
   onSubmit,
-  onPrint,
 }: PaymentSheetProps) {
   const { t } = useTranslation();
   const { palette, themeStyle } = useTheme();
   const insets = useSafeAreaInsets();
   const bottomInset = resolveBottomInset(insets.bottom);
-  const [method, setMethod] = useState<CollectMethod>('Cash');
+  const [cashInput, setCashInput] = useState('');
+  const [upiInput, setUpiInput] = useState('');
 
   useEffect(() => {
     if (visible) {
-      setMethod('Cash');
+      setCashInput('');
+      setUpiInput('');
     }
-  }, [visible]);
+  }, [visible, order.id, order.totalAmount]);
 
-  const preview = useMemo(() => draftPreview(method), [draftPreview, method]);
+  const totalPaise = Math.round(order.totalAmount * 100);
+  const cashPaise = cashInput.trim() === '' ? 0 : parseRupeeToPaise(cashInput);
+  const upiPaise = upiInput.trim() === '' ? 0 : parseRupeeToPaise(upiInput);
+  const amountsValid = cashPaise !== null && upiPaise !== null;
+  const paidPaise = amountsValid ? cashPaise + upiPaise : null;
+  const remainingPaise = paidPaise === null ? null : totalPaise - paidPaise;
+  const settlement =
+    amountsValid && cashPaise !== null && upiPaise !== null
+      ? deriveSettlement(cashPaise / 100, upiPaise / 100, order.totalAmount)
+      : null;
+  const canClose = Boolean(settlement) && !submitting;
+
+  const statusText = useMemo(() => {
+    if (!amountsValid || remainingPaise === null) {
+      return t('billing.amountInvalid');
+    }
+    if (remainingPaise === 0) {
+      return t('billing.amountMatched');
+    }
+    if (remainingPaise > 0) {
+      return t('billing.amountShort', { amount: formatInr(remainingPaise / 100) });
+    }
+    return t('billing.amountOver', { amount: formatInr(Math.abs(remainingPaise) / 100) });
+  }, [amountsValid, remainingPaise, t]);
+
+  const fillAllCash = () => {
+    setCashInput(formatRupeeInput(order.totalAmount));
+    setUpiInput('0');
+  };
+
+  const fillAllUpi = () => {
+    setCashInput('0');
+    setUpiInput(formatRupeeInput(order.totalAmount));
+  };
 
   const submit = () => {
-    if (submitting) {
+    if (!settlement || submitting) {
       return;
     }
-    onSubmit({ method, paidAmount: order.totalAmount });
+    onSubmit({ cashAmount: settlement.cashAmount, upiAmount: settlement.upiAmount });
   };
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={themeStyle} className="flex-1 justify-end">
         <Pressable accessibilityRole="button" className="flex-1 bg-black/50" disabled={submitting} onPress={onClose} />
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={{ maxHeight: '92%' }}
-        >
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View
-            className="rounded-t-3xl border-t border-line bg-surface"
-            style={{ maxHeight: '100%', paddingBottom: bottomInset + 16 }}
+            className="rounded-t-3xl border-t border-line bg-surface px-4 pt-4"
+            style={{ paddingBottom: bottomInset + 16 }}
           >
-            <View className="px-4 pt-4">
-              <View className="mb-3 h-1.5 w-12 self-center rounded-full bg-line" />
-              <Text className="text-center text-sm font-semibold uppercase tracking-wide text-muted">
-                {t('billing.sheetTitle')}
-              </Text>
-              <Text className="mt-2 text-center text-3xl font-bold text-ink">{formatInr(order.totalAmount)}</Text>
+            <View className="mb-3 h-1.5 w-12 self-center rounded-full bg-line" />
+            <Text className="text-center text-sm font-semibold uppercase tracking-wide text-muted">
+              {t('billing.sheetTitle')}
+            </Text>
+            <Text className="mt-2 text-center text-3xl font-bold text-ink">{formatInr(order.totalAmount)}</Text>
+            <Text className="mt-1 text-center text-sm text-muted">{t('billing.splitHint')}</Text>
+
+            <View className="mt-4 flex-row gap-2">
+              <PresetButton
+                label={t('billing.allCash')}
+                icon="cash-outline"
+                disabled={submitting}
+                iconColor={palette.ink}
+                onPress={fillAllCash}
+              />
+              <PresetButton
+                label={t('billing.allUpi')}
+                icon="qr-code-outline"
+                disabled={submitting}
+                iconColor={palette.ink}
+                onPress={fillAllUpi}
+              />
             </View>
 
-            <ScrollView
-              style={{ maxHeight: 320 }}
-              contentContainerClassName="items-center px-3 py-3"
-              keyboardShouldPersistTaps="handled"
-              nestedScrollEnabled
+            <View className="mt-4 gap-3">
+              <AmountField
+                label={t('billing.methods.Cash')}
+                value={cashInput}
+                editable={!submitting}
+                onChangeText={(value) => setCashInput(sanitizeRupeeInput(value))}
+              />
+              <AmountField
+                label={t('billing.methods.UPI')}
+                value={upiInput}
+                editable={!submitting}
+                onChangeText={(value) => setUpiInput(sanitizeRupeeInput(value))}
+              />
+            </View>
+
+            <Text
+              className={`mt-3 text-center text-sm ${
+                settlement ? 'text-success' : 'text-muted'
+              }`}
             >
-              {preview ? (
-                <ThermalReceipt receipt={preview.receipt} copy={preview.copy} />
-              ) : (
-                <Text className="px-2 py-6 text-center text-sm text-muted">{t('billing.missing')}</Text>
-              )}
-            </ScrollView>
+              {statusText}
+            </Text>
 
-            <View className="border-t border-line px-4 pt-3">
-              <Text className="mb-2 text-sm font-semibold text-muted">{t('billing.method')}</Text>
-              <View className="flex-row gap-3">
-                {COLLECT_METHODS.map((entry) => {
-                  const selected = method === entry;
-                  return (
-                    <MethodButton
-                      key={entry}
-                      label={t(`billing.methods.${entry}`)}
-                      icon={METHOD_ICONS[entry]}
-                      selected={selected}
-                      disabled={submitting}
-                      iconColor={selected ? palette.accentInk : palette.muted}
-                      onPress={() => setMethod(entry)}
-                    />
-                  );
-                })}
-              </View>
+            {errorCode ? (
+              <Text className="mt-2 text-center text-sm text-danger">{t(`billing.errors.${errorCode}`)}</Text>
+            ) : null}
 
-              {errorCode ? (
-                <Text className="mt-3 text-center text-sm text-danger">{t(`billing.errors.${errorCode}`)}</Text>
-              ) : null}
-              {shareNotice === 'printFailed' ? (
-                <Text className="mt-3 text-center text-sm text-danger">{t('billing.printFailed')}</Text>
-              ) : null}
-
-              <View className="mt-3 flex-row gap-2">
-                <ActionButton
-                  label={t('billing.cancel')}
-                  icon="close-outline"
-                  disabled={submitting}
-                  iconColor={palette.muted}
-                  muted
-                  onPress={onClose}
-                />
-                <ActionButton
-                  label={t('billing.print')}
-                  icon="print-outline"
-                  disabled={submitting || !preview}
-                  iconColor={palette.ink}
-                  onPress={() => {
-                    if (preview) {
-                      onPrint(preview, { method, paidAmount: order.totalAmount });
-                    }
-                  }}
-                />
-                <ActionButton
-                  label={t('billing.close')}
-                  icon="checkmark-circle-outline"
-                  selected
-                  disabled={submitting}
-                  busy={submitting}
-                  iconColor={palette.accentInk}
-                  onPress={submit}
-                />
-              </View>
+            <View className="mt-4 flex-row gap-2">
+              <ActionButton
+                label={t('billing.cancel')}
+                icon="close-outline"
+                disabled={submitting}
+                iconColor={palette.muted}
+                muted
+                onPress={onClose}
+              />
+              <ActionButton
+                label={t('billing.closeBill')}
+                icon="checkmark-circle-outline"
+                selected
+                disabled={!canClose}
+                busy={submitting}
+                iconColor={palette.accentInk}
+                onPress={submit}
+              />
             </View>
           </View>
         </KeyboardAvoidingView>
@@ -173,36 +178,56 @@ export function PaymentSheet({
   );
 }
 
-function MethodButton({
+function AmountField({
+  label,
+  value,
+  editable,
+  onChangeText,
+}: {
+  label: string;
+  value: string;
+  editable: boolean;
+  onChangeText: (value: string) => void;
+}) {
+  return (
+    <View>
+      <Text className="mb-1.5 text-sm font-semibold text-muted">{label}</Text>
+      <TextInput
+        value={value}
+        editable={editable}
+        onChangeText={onChangeText}
+        keyboardType="decimal-pad"
+        placeholder="0"
+        placeholderTextColor="#9CA3AF"
+        className="h-12 rounded-xl border border-line bg-canvas px-3 text-base font-semibold text-ink"
+      />
+    </View>
+  );
+}
+
+function PresetButton({
   label,
   icon,
   onPress,
   disabled = false,
-  selected = false,
   iconColor,
 }: {
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
   onPress: () => void;
   disabled?: boolean;
-  selected?: boolean;
   iconColor: string;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ selected, disabled }}
+      accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
-      className={`h-12 min-w-0 flex-1 flex-row items-center justify-center gap-1.5 rounded-xl border px-2 disabled:opacity-50 ${
-        selected ? 'border-accent bg-accent' : 'border-line bg-canvas'
-      }`}
+      className="h-11 min-w-0 flex-1 flex-row items-center justify-center gap-1.5 rounded-xl border border-line bg-canvas px-2 disabled:opacity-50"
     >
-      <Ionicons name={icon} size={18} color={iconColor} />
-      <Text
-        className={`text-sm font-semibold ${selected ? 'text-accent-ink' : 'text-ink'}`}
-        numberOfLines={1}
-      >
+      <Ionicons name={icon} size={16} color={iconColor} />
+      <Text className="text-sm font-semibold text-ink" numberOfLines={1}>
         {label}
       </Text>
     </Pressable>

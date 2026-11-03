@@ -50,6 +50,7 @@ type SellerRow = {
 type SeriesRow = {
   bucket: string | null;
   amount: number | null;
+  order_count: number | null;
 };
 
 type RecentRow = {
@@ -161,7 +162,8 @@ export async function loadDashboard(tenantId: string): Promise<DashboardSnapshot
     const last7Rows = await database.getAllAsync<SeriesRow>(
       `SELECT
          strftime('%Y-%m-%d', closed_at / 1000, 'unixepoch', 'localtime') AS bucket,
-         COALESCE(SUM(total_amount), 0) AS amount
+         COALESCE(SUM(total_amount), 0) AS amount,
+         COUNT(*) AS order_count
        FROM orders
        WHERE tenant_id = ? AND status = 'PAID' AND closed_at >= ? AND closed_at < ?
        GROUP BY bucket
@@ -171,7 +173,8 @@ export async function loadDashboard(tenantId: string): Promise<DashboardSnapshot
     const last12Rows = await database.getAllAsync<SeriesRow>(
       `SELECT
          strftime('%Y-%m', closed_at / 1000, 'unixepoch', 'localtime') AS bucket,
-         COALESCE(SUM(total_amount), 0) AS amount
+         COALESCE(SUM(total_amount), 0) AS amount,
+         COUNT(*) AS order_count
        FROM orders
        WHERE tenant_id = ? AND status = 'PAID' AND closed_at >= ? AND closed_at < ?
        GROUP BY bucket
@@ -226,30 +229,41 @@ export async function loadDashboard(tenantId: string): Promise<DashboardSnapshot
 }
 
 function fillDailySeries(range: DateRange, rows: SeriesRow[]): DashboardSalesPoint[] {
-  const amounts = seriesMap(rows);
-  return eachDateKey(range).map((bucket) => ({
-    bucket,
-    amount: amounts.get(bucket) ?? 0,
-  }));
+  const series = seriesMap(rows);
+  return eachDateKey(range).map((bucket) => {
+    const point = series.get(bucket);
+    return {
+      bucket,
+      amount: point?.amount ?? 0,
+      orderCount: point?.orderCount ?? 0,
+    };
+  });
 }
 
 function fillMonthlySeries(now: Date, rows: SeriesRow[]): DashboardSalesPoint[] {
-  const amounts = seriesMap(rows);
-  return eachMonthKey(now).map((bucket) => ({
-    bucket,
-    amount: amounts.get(bucket) ?? 0,
-  }));
+  const series = seriesMap(rows);
+  return eachMonthKey(now).map((bucket) => {
+    const point = series.get(bucket);
+    return {
+      bucket,
+      amount: point?.amount ?? 0,
+      orderCount: point?.orderCount ?? 0,
+    };
+  });
 }
 
-function seriesMap(rows: SeriesRow[]): Map<string, number> {
-  const amounts = new Map<string, number>();
+function seriesMap(rows: SeriesRow[]): Map<string, { amount: number; orderCount: number }> {
+  const series = new Map<string, { amount: number; orderCount: number }>();
   for (const row of rows) {
     if (!row.bucket) {
       continue;
     }
-    amounts.set(row.bucket, money(row.amount));
+    series.set(row.bucket, {
+      amount: money(row.amount),
+      orderCount: count(row.order_count),
+    });
   }
-  return amounts;
+  return series;
 }
 
 function bounds(range: DateRange): { start: number; end: number } {

@@ -139,6 +139,7 @@ async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
   // After any items-table rebuilds: add + backfill serial numbers.
   await ensureItemSerialNumbers(database);
   await ensureServiceStations(database);
+  await ensureOrderSplitPayments(database);
   await assertSchemaReady(database);
   await maybeResetLocalLedger(database);
 
@@ -429,6 +430,152 @@ async function relaxItemTypeChecks(database: SQLite.SQLiteDatabase): Promise<voi
       ALTER TABLE items_next RENAME TO items;
       CREATE UNIQUE INDEX IF NOT EXISTS items_tenant_item_code_idx
         ON items (tenant_id, item_code);
+    `);
+  } finally {
+    await database.execAsync('PRAGMA foreign_keys = ON');
+  }
+}
+
+/** Adds cash/upi amounts and Split payment method to existing orders tables. */
+async function ensureOrderSplitPayments(database: SQLite.SQLiteDatabase): Promise<void> {
+  const row = await database.getFirstAsync<{ sql: string | null }>(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'orders'",
+  );
+  if (row?.sql?.includes('cash_amount') && row.sql.includes("'Split'")) {
+    return;
+  }
+
+  await database.execAsync('PRAGMA foreign_keys = OFF');
+  try {
+    await database.execAsync(`
+      DROP TRIGGER IF EXISTS orders_lock_identity;
+      DROP TRIGGER IF EXISTS orders_lock_paid;
+      DROP TRIGGER IF EXISTS orders_block_delete;
+      DROP TRIGGER IF EXISTS order_items_lock_insert;
+      DROP TRIGGER IF EXISTS order_items_lock_update;
+      DROP TRIGGER IF EXISTS order_items_lock_delete;
+
+      CREATE TABLE orders_next (
+        id TEXT PRIMARY KEY NOT NULL,
+        tenant_id TEXT NOT NULL,
+        table_id TEXT,
+        order_type TEXT NOT NULL CHECK (order_type IN ('TABLE', 'COUNTER')),
+        status TEXT NOT NULL CHECK (status IN ('OPEN', 'PAID')),
+        total_amount REAL NOT NULL CHECK (total_amount >= 0),
+        paid_amount REAL NOT NULL CHECK (paid_amount >= 0),
+        cash_amount REAL NOT NULL DEFAULT 0 CHECK (cash_amount >= 0),
+        upi_amount REAL NOT NULL DEFAULT 0 CHECK (upi_amount >= 0),
+        payment_method TEXT CHECK (payment_method IN ('Cash', 'UPI', 'Split', 'Other')),
+        is_credit INTEGER NOT NULL DEFAULT 0 CHECK (is_credit IN (0, 1)),
+        order_sequence_string TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        closed_at INTEGER,
+        created_by TEXT NOT NULL,
+        updated_at INTEGER NOT NULL DEFAULT 0,
+        CHECK (paid_amount <= total_amount),
+        CHECK (
+          (order_type = 'TABLE' AND table_id IS NOT NULL)
+          OR (order_type = 'COUNTER' AND table_id IS NULL)
+        ),
+        CHECK (
+          (
+            status = 'OPEN'
+            AND payment_method IS NULL
+            AND paid_amount = 0
+            AND cash_amount = 0
+            AND upi_amount = 0
+            AND closed_at IS NULL
+            AND is_credit = 0
+          )
+          OR (
+            status = 'PAID'
+            AND payment_method IS NOT NULL
+            AND closed_at IS NOT NULL
+            AND is_credit = CASE WHEN paid_amount < total_amount THEN 1 ELSE 0 END
+            AND (
+              payment_method = 'Other'
+              OR paid_amount = cash_amount + upi_amount
+            )
+          )
+        ),
+        FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE RESTRICT
+      );
+
+      INSERT INTO orders_next (
+        id, tenant_id, table_id, order_type, status, total_amount, paid_amount,
+        cash_amount, upi_amount, payment_method, is_credit, order_sequence_string,
+        created_at, closed_at, created_by, updated_at
+      )
+      SELECT
+        id, tenant_id, table_id, order_type, status, total_amount, paid_amount,
+        CASE WHEN payment_method = 'Cash' THEN paid_amount ELSE 0 END,
+        CASE WHEN payment_method = 'UPI' THEN paid_amount ELSE 0 END,
+        payment_method, is_credit, order_sequence_string,
+        created_at, closed_at, created_by, updated_at
+      FROM orders;
+
+      DROP TABLE orders;
+      ALTER TABLE orders_next RENAME TO orders;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS orders_tenant_sequence_idx
+        ON orders (tenant_id, order_sequence_string);
+      CREATE INDEX IF NOT EXISTS orders_tenant_status_closed_idx
+        ON orders (tenant_id, status, closed_at DESC);
+      CREATE UNIQUE INDEX IF NOT EXISTS orders_one_open_table_idx
+        ON orders (tenant_id, table_id)
+        WHERE status = 'OPEN' AND order_type = 'TABLE';
+      CREATE UNIQUE INDEX IF NOT EXISTS orders_one_open_counter_idx
+        ON orders (tenant_id)
+        WHERE status = 'OPEN' AND order_type = 'COUNTER';
+
+      CREATE TRIGGER IF NOT EXISTS orders_lock_identity
+      BEFORE UPDATE ON orders
+      WHEN NEW.order_type <> OLD.order_type
+        OR IFNULL(NEW.table_id, '') <> IFNULL(OLD.table_id, '')
+        OR NEW.tenant_id <> OLD.tenant_id
+        OR NEW.order_sequence_string <> OLD.order_sequence_string
+        OR NEW.created_at <> OLD.created_at
+        OR NEW.created_by <> OLD.created_by
+      BEGIN
+        SELECT RAISE(ABORT, 'order identity cannot change');
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS orders_lock_paid
+      BEFORE UPDATE ON orders
+      WHEN OLD.status = 'PAID'
+      BEGIN
+        SELECT RAISE(ABORT, 'closed orders are read-only');
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS orders_block_delete
+      BEFORE DELETE ON orders
+      WHEN OLD.status <> 'OPEN'
+        OR EXISTS (SELECT 1 FROM order_items WHERE order_id = OLD.id)
+      BEGIN
+        SELECT RAISE(ABORT, 'closed orders are read-only');
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS order_items_lock_insert
+      BEFORE INSERT ON order_items
+      WHEN (SELECT status FROM orders WHERE id = NEW.order_id) IS NOT 'OPEN'
+      BEGIN
+        SELECT RAISE(ABORT, 'closed orders are read-only');
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS order_items_lock_update
+      BEFORE UPDATE ON order_items
+      WHEN (SELECT status FROM orders WHERE id = OLD.order_id) IS NOT 'OPEN'
+      BEGIN
+        SELECT RAISE(ABORT, 'closed orders are read-only');
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS order_items_lock_delete
+      BEFORE DELETE ON order_items
+      WHEN (SELECT status FROM orders WHERE id = OLD.order_id) IS NOT 'OPEN'
+      BEGIN
+        SELECT RAISE(ABORT, 'closed orders are read-only');
+      END;
     `);
   } finally {
     await database.execAsync('PRAGMA foreign_keys = ON');

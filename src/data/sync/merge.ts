@@ -540,8 +540,9 @@ async function insertOrderShell(
   await database.runAsync(
     `INSERT INTO orders (
        id, tenant_id, table_id, order_type, status, total_amount, paid_amount,
-       payment_method, is_credit, order_sequence_string, created_at, closed_at, created_by, updated_at
-     ) VALUES (?, ?, ?, ?, 'OPEN', 0, 0, NULL, 0, ?, ?, NULL, ?, ?)`,
+       cash_amount, upi_amount, payment_method, is_credit, order_sequence_string,
+       created_at, closed_at, created_by, updated_at
+     ) VALUES (?, ?, ?, ?, 'OPEN', 0, 0, 0, 0, NULL, 0, ?, ?, NULL, ?, ?)`,
     [
       textField(order, 'id'),
       tenantId,
@@ -590,11 +591,23 @@ async function markOrderPaid(
 ): Promise<void> {
   const total = numberField(order, 'total_amount');
   const paid = numberField(order, 'paid_amount');
+  const method = textField(order, 'payment_method');
+  let cash = numberField(order, 'cash_amount');
+  let upi = numberField(order, 'upi_amount');
+  if (cash === 0 && upi === 0 && paid > 0) {
+    if (method === 'Cash') {
+      cash = paid;
+    } else if (method === 'UPI') {
+      upi = paid;
+    }
+  }
   await database.runAsync(
     `UPDATE orders
      SET status = 'PAID',
          total_amount = ?,
          paid_amount = ?,
+         cash_amount = ?,
+         upi_amount = ?,
          payment_method = ?,
          is_credit = ?,
          closed_at = ?,
@@ -603,7 +616,9 @@ async function markOrderPaid(
     [
       total,
       paid,
-      textField(order, 'payment_method'),
+      cash,
+      upi,
+      method,
       paid < total ? 1 : 0,
       Math.round(numberField(order, 'closed_at')) || Date.now(),
       orderVersion(order),

@@ -61,7 +61,17 @@ function HistoryRow({ order, parent }: { order: OrderSummary; parent: BillListPa
   const { t } = useTranslation();
   const place =
     order.orderType === 'COUNTER' ? t('billing.counterTitle') : t('billing.tableTitle', { number: order.tableId ?? '' });
-  const method = order.paymentMethod ? t(`billing.methods.${order.paymentMethod}`) : '';
+  const method =
+    order.paymentMethod === 'Split'
+      ? t('billing.methods.splitDetail', {
+          cashLabel: t('billing.methods.Cash'),
+          cashAmount: formatInr(order.cashAmount),
+          upiLabel: t('billing.methods.UPI'),
+          upiAmount: formatInr(order.upiAmount),
+        })
+      : order.paymentMethod
+        ? t(`billing.methods.${order.paymentMethod}`)
+        : '';
 
   return (
     <Pressable
