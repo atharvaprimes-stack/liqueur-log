@@ -12,7 +12,7 @@ import {
   updateOwnTenant,
   updateTableCount as saveTableCount,
 } from '../data/repositories/authRepository';
-import { syncNow } from '../data/sync/engine';
+import { scheduleBackgroundSync } from '../data/sync/engine';
 import type { Tenant, User } from '../domain/models/auth';
 import { getSessionInteractionAt, setSessionInteractionAt } from '../security/sessionCredentials';
 import { AuthContext, useAuth } from './auth-context';
@@ -49,7 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setCurrentUser(session?.user ?? null);
         setCurrentTenant(session?.tenant ?? null);
         if (session) {
-          void syncNow().catch(() => undefined);
+          void scheduleBackgroundSync({ force: true });
         }
       } catch (error) {
         console.error('[auth] startup failed', error);
@@ -84,16 +84,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
-        void syncNow();
+        void scheduleBackgroundSync({ force: true });
       }
     });
     return () => subscription.remove();
   }, [currentUser]);
 
   const logout = useCallback(async () => {
-    await clearSession();
-    setCurrentUser(null);
-    setCurrentTenant(null);
+    try {
+      await clearSession();
+    } finally {
+      // Always clear React state so inactivity logout cannot bounce back to /home.
+      setCurrentUser(null);
+      setCurrentTenant(null);
+    }
   }, []);
 
   const updateAccount = useCallback(

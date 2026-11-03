@@ -2,8 +2,9 @@
  * Import kitchen menu items from a friendly Excel workbook into Supabase.
  *
  * Expected sheet: "Menu Items" (or the first sheet) with columns:
- *   Item Code, English Name, Marathi Equivalent Name, Brand, Type, Strength,
+ *   English Name, Marathi Equivalent Name, Brand, Type, Strength,
  *   Purchase, Selling, Opening, Low Stock
+ * Optional: id (UUID), serial_no
  *
  * Cells with "NA" mean the field does not apply (stored as safe defaults;
  * kitchen items are not inventory-tracked).
@@ -28,7 +29,9 @@ const CATALOG_DIR = path.join(ROOT, 'data', 'catalog');
 const CHUNK_SIZE = 40;
 
 const HEADER_MAP = {
-  'item code': 'item_code',
+  id: 'id',
+  'serial no': 'serial_no',
+  serial_no: 'serial_no',
   'english name': 'name_en',
   'marathi equivalent name': 'name_mr',
   marathi: 'name_mr',
@@ -81,15 +84,31 @@ function cleanLabel(value, field, maxLen = 80) {
   return clean;
 }
 
-function parseItemCode(value) {
-  const itemCode = String(value ?? '')
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '');
-  if (!/^[A-Z0-9]{2,12}$/.test(itemCode)) {
-    throw new Error(`Invalid item_code: "${value}" (need 2–12 A–Z / 0–9)`);
+function parseOptionalId(value) {
+  const text = String(value ?? '').trim();
+  if (!text) {
+    return null;
   }
-  return itemCode;
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      text,
+    )
+  ) {
+    throw new Error(`Invalid id: "${value}" (need a UUID)`);
+  }
+  return text.toLowerCase();
+}
+
+function parseOptionalSerial(value) {
+  const text = String(value ?? '').trim();
+  if (!text || isNotApplicable(text)) {
+    return null;
+  }
+  const num = Number(text);
+  if (!/^\d+$/.test(text) || !Number.isInteger(num) || num < 1 || num > 999999) {
+    throw new Error(`Invalid serial_no: "${value}"`);
+  }
+  return num;
 }
 
 function parseMoney(value, field, { allowNa = false } = {}) {
@@ -149,22 +168,24 @@ function readKitchenWorkbook(filePath) {
   const typeOrder = [];
   const typeSeen = new Set();
   const items = [];
-  const seenCodes = new Set();
+  const seenIds = new Set();
 
   rawRows.forEach((raw, index) => {
     const line = index + 2;
     const row = normalizeRow(raw);
     try {
-      const blank = !String(row.item_code ?? '').trim() && !String(row.name_en ?? '').trim();
+      const blank = !String(row.name_en ?? '').trim() && !String(row.id ?? '').trim();
       if (blank) {
         return;
       }
 
-      const itemCode = parseItemCode(row.item_code);
-      if (seenCodes.has(itemCode)) {
-        throw new Error(`Duplicate item_code ${itemCode}`);
+      const id = parseOptionalId(row.id);
+      if (id) {
+        if (seenIds.has(id)) {
+          throw new Error(`Duplicate id ${id}`);
+        }
+        seenIds.add(id);
       }
-      seenCodes.add(itemCode);
 
       const itemType = cleanLabel(row.item_type, 'Type', 40);
       const typeKey = itemType.toLowerCase();
@@ -177,7 +198,8 @@ function readKitchenWorkbook(filePath) {
       const strength = isNotApplicable(strengthRaw) || !strengthRaw ? 'NA' : cleanLabel(strengthRaw, 'Strength', 40);
 
       items.push({
-        itemCode,
+        id,
+        serialNo: parseOptionalSerial(row.serial_no),
         nameEn: cleanLabel(row.name_en, 'English Name'),
         nameMr: cleanLabel(row.name_mr, 'Marathi Equivalent Name'),
         brand: cleanLabel(row.brand, 'Brand'),
@@ -248,13 +270,12 @@ function buildChanges(tenantId, parsed) {
 
   // serial_no 0 → server assigns MAX(serial)+1 so kitchen appends after bar catalog.
   for (const item of parsed.items) {
-    const id = crypto.randomUUID();
+    const id = item.id ?? crypto.randomUUID();
     changes.push(
       change('items', id, {
         id,
         tenant_id: tenantId,
-        serial_no: 0,
-        item_code: item.itemCode,
+        serial_no: item.serialNo ?? 0,
         name_en: item.nameEn,
         name_mr: item.nameMr,
         brand: item.brand,

@@ -12,7 +12,6 @@ export type { ServiceStation };
 export type OrderLine = {
   id: string;
   itemId: string;
-  itemCode: string;
   nameEn: string;
   nameMr: string;
   liquorType: string;

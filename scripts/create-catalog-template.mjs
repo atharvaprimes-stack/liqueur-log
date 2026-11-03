@@ -53,7 +53,6 @@ const SHEETS = {
   items: {
     headers: [
       'service_station',
-      'item_code',
       'name_en',
       'name_mr',
       'brand',
@@ -68,7 +67,6 @@ const SHEETS = {
     rows: [
       {
         service_station: 'bar',
-        item_code: 'BL180',
         name_en: 'Blue Label',
         name_mr: 'Blue Label',
         brand: 'Johnnie Walker',
@@ -82,7 +80,6 @@ const SHEETS = {
       },
       {
         service_station: 'kitchen',
-        item_code: 'SM001',
         name_en: 'Samosa',
         name_mr: 'Samosa',
         brand: 'Kitchen',

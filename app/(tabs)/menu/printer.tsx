@@ -11,7 +11,6 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { useTranslation } from 'react-i18next';
 
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
-import { useAuth } from '../../../src/context/AuthContext';
 import { leaveScreen } from '../../../src/navigation/leave';
 import {
   getPrintFontSize,
@@ -67,9 +66,7 @@ const PAPER_LABELS: Record<PrintPaperWidth, 'printer.paper58' | 'printer.paper80
 
 export default function PrinterScreen() {
   const { t } = useTranslation();
-  const { currentUser } = useAuth();
   const { palette } = useTheme();
-  const isAdmin = currentUser?.role === 'ADMIN';
   const supported = isThermalPrinterSupported();
   const [registered, setRegistered] = useState<RegisteredPrinter | null>(null);
   const [devices, setDevices] = useState<ThermalDevice[]>([]);
@@ -164,24 +161,24 @@ export default function PrinterScreen() {
   }, []);
 
   const setFontSize = useCallback(async (size: PrintFontSize) => {
-    if (!isAdmin || size === printFontSize) {
+    if (size === printFontSize) {
       return;
     }
     setPrintFontSize(size);
     setNotice(null);
     await savePrintFontSize(size);
     setNotice('fontSaved');
-  }, [isAdmin, printFontSize]);
+  }, [printFontSize]);
 
   const setPaperWidth = useCallback(async (width: PrintPaperWidth) => {
-    if (!isAdmin || width === printPaperWidth) {
+    if (width === printPaperWidth) {
       return;
     }
     setPrintPaperWidth(width);
     setNotice(null);
     await savePrintPaperWidth(width);
     setNotice('paperSaved');
-  }, [isAdmin, printPaperWidth]);
+  }, [printPaperWidth]);
 
   const noticeText = useMemo(() => {
     switch (notice) {
@@ -249,67 +246,63 @@ export default function PrinterScreen() {
           )}
         </View>
 
-        {isAdmin ? (
-          <>
-            <View className="overflow-hidden rounded-lg border border-line bg-surface px-4 py-3">
-              <Text className="text-sm font-semibold text-muted">{t('printer.paperSize')}</Text>
-              <Text className="mt-1 text-sm text-muted">{t('printer.paperSizeHint')}</Text>
-              <View className="mt-3 flex-row gap-1 rounded-lg bg-canvas p-1">
-                {PRINT_PAPER_WIDTHS.map((width) => {
-                  const selected = printPaperWidth === width;
-                  return (
-                    <Pressable
-                      key={width}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected }}
-                      accessibilityLabel={t(PAPER_LABELS[width])}
-                      onPress={() => void setPaperWidth(width)}
-                      className={`h-10 min-w-0 flex-1 items-center justify-center rounded-lg px-1 ${
-                        selected ? 'bg-accent' : ''
-                      }`}
-                    >
-                      <Text
-                        numberOfLines={1}
-                        className={`text-[13px] font-semibold ${selected ? 'text-accent-ink' : 'text-ink'}`}
-                      >
-                        {t(PAPER_LABELS[width])}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
+        <View className="overflow-hidden rounded-lg border border-line bg-surface px-4 py-3">
+          <Text className="text-sm font-semibold text-muted">{t('printer.paperSize')}</Text>
+          <Text className="mt-1 text-sm text-muted">{t('printer.paperSizeHint')}</Text>
+          <View className="mt-3 flex-row gap-1 rounded-lg bg-canvas p-1">
+            {PRINT_PAPER_WIDTHS.map((width) => {
+              const selected = printPaperWidth === width;
+              return (
+                <Pressable
+                  key={width}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={t(PAPER_LABELS[width])}
+                  onPress={() => void setPaperWidth(width)}
+                  className={`h-10 min-w-0 flex-1 items-center justify-center rounded-lg px-1 ${
+                    selected ? 'bg-accent' : ''
+                  }`}
+                >
+                  <Text
+                    numberOfLines={1}
+                    className={`text-[13px] font-semibold ${selected ? 'text-accent-ink' : 'text-ink'}`}
+                  >
+                    {t(PAPER_LABELS[width])}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
 
-            <View className="overflow-hidden rounded-lg border border-line bg-surface px-4 py-3">
-              <Text className="text-sm font-semibold text-muted">{t('printer.fontSize')}</Text>
-              <Text className="mt-1 text-sm text-muted">{t('printer.fontSizeHint')}</Text>
-              <View className="mt-3 flex-row gap-1 rounded-lg bg-canvas p-1">
-                {PRINT_FONT_SIZES.map((size) => {
-                  const selected = printFontSize === size;
-                  return (
-                    <Pressable
-                      key={size}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected }}
-                      accessibilityLabel={t(FONT_LABELS[size])}
-                      onPress={() => void setFontSize(size)}
-                      className={`h-10 min-w-0 flex-1 items-center justify-center rounded-lg px-1 ${
-                        selected ? 'bg-accent' : ''
-                      }`}
-                    >
-                      <Text
-                        numberOfLines={1}
-                        className={`text-[13px] font-semibold ${selected ? 'text-accent-ink' : 'text-ink'}`}
-                      >
-                        {t(FONT_LABELS[size])}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-          </>
-        ) : null}
+        <View className="overflow-hidden rounded-lg border border-line bg-surface px-4 py-3">
+          <Text className="text-sm font-semibold text-muted">{t('printer.fontSize')}</Text>
+          <Text className="mt-1 text-sm text-muted">{t('printer.fontSizeHint')}</Text>
+          <View className="mt-3 flex-row gap-1 rounded-lg bg-canvas p-1">
+            {PRINT_FONT_SIZES.map((size) => {
+              const selected = printFontSize === size;
+              return (
+                <Pressable
+                  key={size}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={t(FONT_LABELS[size])}
+                  onPress={() => void setFontSize(size)}
+                  className={`h-10 min-w-0 flex-1 items-center justify-center rounded-lg px-1 ${
+                    selected ? 'bg-accent' : ''
+                  }`}
+                >
+                  <Text
+                    numberOfLines={1}
+                    className={`text-[13px] font-semibold ${selected ? 'text-accent-ink' : 'text-ink'}`}
+                  >
+                    {t(FONT_LABELS[size])}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
 
         {supported ? (
           <View className="overflow-hidden rounded-lg border border-line bg-surface">

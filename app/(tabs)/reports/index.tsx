@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next';
 import { ActionRow } from '../../../src/components/FormActions';
 import { ScreenWrapper } from '../../../src/components/ScreenWrapper';
 import { useAuth } from '../../../src/context/AuthContext';
+import { packFlowColumns } from '../../../src/domain/catalogSheet';
 import {
   formatDateKey,
   presentReport,
@@ -311,7 +312,6 @@ export default function ReportsScreen() {
         onClose={closePreview}
         onPrint={() => void runExportAction('print')}
         onShare={() => void runExportAction('share')}
-        onSave={() => void runExportAction('save')}
       />
     </ScreenWrapper>
   );
@@ -325,7 +325,6 @@ function A4PreviewModal({
   onClose,
   onPrint,
   onShare,
-  onSave,
 }: {
   visible: boolean;
   sheet: ReportSheet | null;
@@ -334,7 +333,6 @@ function A4PreviewModal({
   onClose: () => void;
   onPrint: () => void;
   onShare: () => void;
-  onSave: () => void;
 }) {
   const { t } = useTranslation();
   const { width, height } = useWindowDimensions();
@@ -387,15 +385,21 @@ function A4PreviewModal({
                 <Text className="pt-0.5 text-center text-[11px] leading-4 text-muted">{sheet.licenseLine}</Text>
               ) : null}
               <View className="my-3 h-0.5 bg-accent" />
-              <Text className="text-center text-sm font-semibold text-ink" numberOfLines={2}>
-                {sheet.title}
-              </Text>
-              <Text className="pt-1 text-center text-[13px] font-medium text-ink" numberOfLines={2}>
-                {sheet.period}
-              </Text>
-              <Text className="pt-1 text-center text-[11px] text-muted" numberOfLines={2}>
-                {sheet.generated}
-              </Text>
+              {sheet.title ? (
+                <Text className="text-center text-sm font-semibold text-ink" numberOfLines={2}>
+                  {sheet.title}
+                </Text>
+              ) : null}
+              {sheet.period ? (
+                <Text className="pt-1 text-center text-[13px] font-medium text-ink" numberOfLines={2}>
+                  {sheet.period}
+                </Text>
+              ) : null}
+              {sheet.generated ? (
+                <Text className="pt-1 text-center text-[11px] text-muted" numberOfLines={2}>
+                  {sheet.generated}
+                </Text>
+              ) : null}
 
               {sheet.summaryLeft.length > 0 || sheet.summaryRight.length > 0 ? (
                 <SummaryColumns left={sheet.summaryLeft} right={sheet.summaryRight} />
@@ -417,21 +421,16 @@ function A4PreviewModal({
             leading={{
               label: t('reports.print'),
               onPress: onPrint,
+              tone: 'accent',
               disabled: actionsDisabled,
               busy: busy === 'print',
             }}
-            middle={{
-              label: t('reports.whatsapp'),
+            trailing={{
+              label: t('reports.share'),
               onPress: onShare,
               tone: 'accent',
               disabled: actionsDisabled,
               busy: busy === 'share',
-            }}
-            trailing={{
-              label: t('reports.save'),
-              onPress: onSave,
-              disabled: actionsDisabled,
-              busy: busy === 'save',
             }}
           />
         </View>
@@ -699,54 +698,101 @@ function ReportTable({
   paperWidth?: number;
 }) {
   const { width } = useWindowDimensions();
+  const screenWidth = width - 32;
+  const flowColumns = table.flowColumns ?? 1;
+  const displayColumnCount = flowColumns > 1 ? table.columns.length * flowColumns : table.columns.length;
+  // Wide reports keep a min width (and horizontal scroll); catalog flow fits the screen.
+  const minTableWidth =
+    flowColumns > 1
+      ? screenWidth
+      : displayColumnCount > 5
+        ? 720
+        : displayColumnCount > 4
+          ? 560
+          : screenWidth;
   const tableWidth = paper
     ? Math.max(paperWidth ?? Math.min(width - 64, 555), 280)
-    : Math.max(width - 32, table.columns.length > 5 ? 720 : 560);
+    : Math.max(screenWidth, minTableWidth);
 
   if (table.empty) {
     return <Text className="pt-4 text-sm text-muted">{table.empty}</Text>;
   }
 
+  const sectionPerGroup = Boolean(table.sectionPerGroup);
+  const flowFill = table.flowFill ?? 'row';
+
   const tableBody = (
     <View style={{ width: tableWidth }} className="overflow-hidden rounded-xl border border-line">
-      <TableCells columns={table.columns} cells={table.columns.map((column) => ({ text: column.text }))} header />
-      {table.groups.map((group, groupIndex) => (
-        <View key={`${group.title}-${groupIndex}`}>
-          {group.title ? (
-            <View className="border-b border-line bg-surface px-3 py-2">
-              <Text className="text-sm font-semibold text-ink" numberOfLines={2}>
-                {group.title}
-              </Text>
-              {group.note ? (
-                <Text className="pt-1 text-[12px] leading-4 text-muted" numberOfLines={3}>
+      {sectionPerGroup || flowColumns > 1 ? null : (
+        <TableCells
+          columns={table.columns}
+          cells={table.columns.map((column) => ({ text: column.text }))}
+          header
+        />
+      )}
+      {table.groups.map((group, groupIndex) => {
+        const packed =
+          flowColumns > 1
+            ? packFlowColumns(
+                group.bands.flatMap((band) => band.rows),
+                table.columns,
+                flowColumns,
+                undefined,
+                flowFill,
+              )
+            : null;
+        const columns = packed?.columns ?? table.columns;
+        const headerCells = columns.map((column) => ({ text: column.text }));
+
+        return (
+          <View key={`${group.title}-${groupIndex}`}>
+            {group.title ? (
+              <View className="border-b border-line bg-surface px-3 py-2">
+                <Text className="text-sm font-semibold text-ink" numberOfLines={2}>
+                  {group.title}
+                </Text>
+                {group.note ? (
+                  <Text className="pt-1 text-[12px] leading-4 text-muted" numberOfLines={3}>
+                    {group.note}
+                  </Text>
+                ) : null}
+              </View>
+            ) : group.note ? (
+              <View className="border-b border-line bg-surface px-3 py-2">
+                <Text className="text-[12px] leading-4 text-muted" numberOfLines={3}>
                   {group.note}
                 </Text>
-              ) : null}
-            </View>
-          ) : group.note ? (
-            <View className="border-b border-line bg-surface px-3 py-2">
-              <Text className="text-[12px] leading-4 text-muted" numberOfLines={3}>
-                {group.note}
-              </Text>
-            </View>
-          ) : null}
-          {group.bands.map((band, bandIndex) => (
-            <View key={`${group.title}-${bandIndex}`}>
-              {band.title ? (
-                <View className="border-b border-line px-3 py-1.5">
-                  <Text className="text-[12px] font-medium text-ink" numberOfLines={2}>
-                    {band.title}
-                  </Text>
-                </View>
-              ) : null}
-              {band.rows.map((row, rowIndex) => (
-                <TableCells key={`${group.title}-${bandIndex}-${rowIndex}`} columns={table.columns} cells={row} />
-              ))}
-            </View>
-          ))}
-          {group.total ? <TableCells columns={table.columns} cells={group.total} total /> : null}
-        </View>
-      ))}
+              </View>
+            ) : null}
+            {sectionPerGroup || flowColumns > 1 ? (
+              <TableCells columns={columns} cells={headerCells} header />
+            ) : null}
+            {packed
+              ? packed.rows.map((row, rowIndex) => (
+                  <TableCells key={`${group.title}-flow-${rowIndex}`} columns={columns} cells={row} />
+                ))
+              : group.bands.map((band, bandIndex) => (
+                  <View key={`${group.title}-${bandIndex}`}>
+                    {band.title ? (
+                      <View className="border-b border-line px-3 py-1.5">
+                        <Text className="text-[12px] font-medium text-ink" numberOfLines={2}>
+                          {band.title}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {band.rows.map((row, rowIndex) => (
+                      <TableCells
+                        key={`${group.title}-${bandIndex}-${rowIndex}`}
+                        columns={table.columns}
+                        cells={row}
+                      />
+                    ))}
+                  </View>
+                ))}
+            {group.total ? <TableCells columns={table.columns} cells={group.total} total /> : null}
+          </View>
+        );
+      })}
       {table.extra ? <TableCells columns={table.columns} cells={table.extra} /> : null}
       {table.grand ? <TableCells columns={table.columns} cells={table.grand} total /> : null}
     </View>
@@ -754,13 +800,15 @@ function ReportTable({
 
   return (
     <View className="mt-4">
-      <Text className="text-base font-semibold text-ink" numberOfLines={1}>
-        {table.title}
-      </Text>
-      {paper ? (
-        <View className="mt-2">{tableBody}</View>
+      {table.title ? (
+        <Text className="text-base font-semibold text-ink" numberOfLines={1}>
+          {table.title}
+        </Text>
+      ) : null}
+      {paper || tableWidth <= screenWidth ? (
+        <View className={table.title ? 'mt-2' : undefined}>{tableBody}</View>
       ) : (
-        <ScrollView horizontal showsHorizontalScrollIndicator className="mt-2">
+        <ScrollView horizontal showsHorizontalScrollIndicator className={table.title ? 'mt-2' : undefined}>
           {tableBody}
         </ScrollView>
       )}
@@ -780,20 +828,28 @@ function TableCells({
   total?: boolean;
 }) {
   return (
-    <View className={`min-h-9 flex-row items-center border-b border-line px-2 ${total ? 'bg-surface' : ''}`}>
+    <View className={`min-h-8 flex-row items-stretch px-2 ${total ? 'bg-surface' : ''}`}>
       {columns.map((column, index) => {
         const cell = cells[index];
         const tone = cell?.tone === 'danger' ? 'text-danger' : cell?.tone === 'muted' || header ? 'text-muted' : 'text-ink';
+        const openMerge = (cell?.rowSpan ?? 1) > 1;
+        const mergeContinue = Boolean(cell?.mergeContinue);
+        const showBottom = !openMerge && !mergeContinue;
         return (
-          <Text
+          <View
             key={`${column.text}-${index}`}
-            numberOfLines={header ? 2 : 1}
-            ellipsizeMode="tail"
-            className={`${tone} px-1 ${header ? 'text-[11px] font-semibold' : 'text-[12px]'} ${total ? 'font-semibold' : ''}`}
-            style={{ flex: column.width, textAlign: column.align, fontVariant: ['tabular-nums'] }}
+            className={`justify-center px-1 ${showBottom ? 'border-b border-line' : ''} ${index > 0 ? 'border-l border-line' : ''}`}
+            style={{ flex: column.width }}
           >
-            {cell?.text}
-          </Text>
+            <Text
+              numberOfLines={cell?.wrap ? Math.max(1, cell.rowSpan ?? 2) : 1}
+              ellipsizeMode="tail"
+              className={`${tone} ${header ? 'text-[10px] font-semibold' : 'text-[11px]'} ${total ? 'font-semibold' : ''}`}
+              style={{ textAlign: column.align, fontVariant: ['tabular-nums'] }}
+            >
+              {mergeContinue ? '' : cell?.text}
+            </Text>
+          </View>
         );
       })}
     </View>

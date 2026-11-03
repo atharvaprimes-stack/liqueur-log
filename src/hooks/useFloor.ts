@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 
 import { useAuth } from '../context/auth-context';
 import { loadFloor, startTableSession } from '../data/repositories/orderRepository';
-import { syncNow } from '../data/sync/engine';
+import { scheduleBackgroundSync } from '../data/sync/engine';
+import { onLedgerUpdated } from '../data/sync/ledgerEvents';
 import { OrderValidationError, type OrderErrorCode } from '../domain/errors';
 import { floorTables, openCounterOrder, type FloorTable, type OrderSummary } from '../domain/models/orders';
 
@@ -22,18 +23,21 @@ export function useFloor(): {
   const [isLoading, setIsLoading] = useState(true);
   const [errorCode, setErrorCode] = useState<OrderErrorCode | null>(null);
 
-  const reload = useCallback(async () => {
+  const reloadLocal = useCallback(async () => {
     if (!tenantId) {
       setTableCount(0);
       setOpenOrders([]);
       return;
     }
-    await syncNow().catch(() => undefined);
     const floor = await loadFloor(tenantId);
     setTableCount(floor.tableCount);
     setOpenOrders(floor.openOrders);
     setErrorCode(null);
   }, [tenantId]);
+
+  useEffect(() => onLedgerUpdated(() => {
+    void reloadLocal().catch(() => undefined);
+  }), [reloadLocal]);
 
   useFocusEffect(
     useCallback(() => {
@@ -45,7 +49,7 @@ export function useFloor(): {
       }
 
       let active = true;
-      void reload()
+      void reloadLocal()
         .catch(() => {
           if (active) {
             setErrorCode('unknown');
@@ -57,10 +61,17 @@ export function useFloor(): {
           }
         });
 
+      void scheduleBackgroundSync().then((didFull) => {
+        if (active && didFull) {
+          return reloadLocal();
+        }
+        return undefined;
+      });
+
       return () => {
         active = false;
       };
-    }, [reload, tenantId]),
+    }, [reloadLocal, tenantId]),
   );
 
   const startTable = useCallback(
@@ -69,10 +80,10 @@ export function useFloor(): {
         throw new OrderValidationError('unknown');
       }
       const order = await startTableSession({ tenantId, actorId, tableNumber });
-      await reload();
+      await reloadLocal();
       return order;
     },
-    [actorId, reload, tenantId],
+    [actorId, reloadLocal, tenantId],
   );
 
   const tables = useMemo(() => floorTables(tableCount, openOrders), [openOrders, tableCount]);

@@ -5,6 +5,7 @@ import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider, SessionTimeoutProvider } from '../src/context/AuthContext';
+import { LedgerSyncProvider } from '../src/context/LedgerSyncContext';
 import { TableRequestsProvider } from '../src/context/TableRequestsContext';
 import { ThemeProvider } from '../src/context/ThemeContext';
 import { ReceiptCaptureHost } from '../src/printing/ReceiptCaptureHost';
@@ -21,12 +22,14 @@ export default function RootLayout() {
       <KeyboardProvider preload={false}>
         <ThemeProvider>
           <AuthProvider>
-            <TableRequestsProvider>
-              <SessionTimeoutProvider>
-                <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: 'transparent' } }} />
-                <ReceiptCaptureHost />
-              </SessionTimeoutProvider>
-            </TableRequestsProvider>
+            <LedgerSyncProvider>
+              <TableRequestsProvider>
+                <SessionTimeoutProvider>
+                  <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: 'transparent' } }} />
+                  <ReceiptCaptureHost />
+                </SessionTimeoutProvider>
+              </TableRequestsProvider>
+            </LedgerSyncProvider>
           </AuthProvider>
         </ThemeProvider>
       </KeyboardProvider>

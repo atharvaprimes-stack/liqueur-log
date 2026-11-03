@@ -26,13 +26,15 @@ export type StockItem = {
   id: string;
   tenantId: string;
   serialNo: number;
-  itemCode: string;
   nameEn: string;
   nameMr: string;
   brand: string;
   liquorType: LiquorType;
   subType: SubType;
+  /** Prep / stock department: exclusive bar or kitchen. */
   serviceStation: ServiceStation;
+  /** When false, sales do not decrement on-hand (classic kitchen dishes). */
+  tracksStock: boolean;
   volumeMl: number;
   purchasePrice: number;
   sellingPrice: number;
@@ -43,13 +45,13 @@ export type StockItem = {
 };
 
 export type CatalogItemInput = {
-  itemCode: string;
   nameEn: string;
   nameMr: string;
   brand: string;
   liquorType: string;
   subType: string;
   serviceStation: ServiceStation;
+  tracksStock: boolean;
   volumeMl: string;
   purchasePrice: string;
   sellingPrice: string;
@@ -59,13 +61,13 @@ export type CatalogItemInput = {
 };
 
 export type CatalogItemDraft = {
-  itemCode: string;
   nameEn: string;
   nameMr: string;
   brand: string;
   liquorType: LiquorType;
   subType: SubType;
   serviceStation: ServiceStation;
+  tracksStock: boolean;
   volumeMl: number;
   purchasePrice: number;
   sellingPrice: number;
@@ -209,6 +211,18 @@ export function defaultServiceStation(liquorType: string): ServiceStation {
   return liquorType.trim().toLowerCase() === 'snacks' ? 'kitchen' : 'bar';
 }
 
+/** Defaults for new catalog rows (and when liquor type changes on create). */
+export function defaultStationDefaults(liquorType: string): {
+  serviceStation: ServiceStation;
+  tracksStock: boolean;
+} {
+  const serviceStation = defaultServiceStation(liquorType);
+  return {
+    serviceStation,
+    tracksStock: serviceStation !== 'kitchen',
+  };
+}
+
 /** Bottle size applies to Mild/Strong; NA (and other strengths) skip volume. */
 export function strengthRequiresVolume(subType: string): boolean {
   const key = subType.trim().toLowerCase();
@@ -223,6 +237,68 @@ export function resolveServiceStation(
     return value;
   }
   return defaultServiceStation(liquorType ?? '');
+}
+
+export function coerceFlag(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === '1' || normalized === 'true' || normalized === 't') {
+      return true;
+    }
+    if (normalized === '0' || normalized === 'false' || normalized === 'f') {
+      return false;
+    }
+  }
+  return fallback;
+}
+
+/**
+ * Resolve prep station + stock tracking from stored columns.
+ * `service_station` is the source of truth (exclusive). Legacy dual-visibility
+ * columns are ignored for filtering and rewritten on save.
+ */
+export function resolveStationFlags(input: {
+  tracksStock?: unknown;
+  tracks_stock?: unknown;
+  serviceStation?: string | null;
+  service_station?: string | null;
+  liquorType?: string | null;
+  liquor_type?: string | null;
+}): {
+  serviceStation: ServiceStation;
+  tracksStock: boolean;
+} {
+  const liquorType = input.liquorType ?? input.liquor_type ?? '';
+  const serviceStation = resolveServiceStation(
+    input.serviceStation ?? input.service_station,
+    liquorType,
+  );
+  const hasTracks = input.tracksStock !== undefined || input.tracks_stock !== undefined;
+  const tracksStockFlag = hasTracks
+    ? coerceFlag(input.tracksStock ?? input.tracks_stock, serviceStation !== 'kitchen')
+    : serviceStation !== 'kitchen';
+
+  return {
+    serviceStation,
+    tracksStock: tracksStockFlag,
+  };
+}
+
+/** Mirror exclusive station into legacy dual columns (kept for sync compat). */
+export function visibilityFlagsForStation(serviceStation: ServiceStation): {
+  showInBar: boolean;
+  showInKitchen: boolean;
+} {
+  return {
+    showInBar: serviceStation === 'bar',
+    showInKitchen: serviceStation === 'kitchen',
+  };
 }
 
 export function volumeMessage(
@@ -261,10 +337,12 @@ export function compactVolume(
   return { key: 'stock.volume.ml', values: { ml: item.volumeMl } };
 }
 
-type StockAlertItem = Pick<StockItem, 'currentStock' | 'lowStockThreshold' | 'serviceStation' | 'liquorType'>;
+type StockAlertItem = Pick<StockItem, 'currentStock' | 'lowStockThreshold'> &
+  Partial<Pick<StockItem, 'serviceStation' | 'liquorType' | 'tracksStock'>>;
 
 export function isOutOfStock(
-  item: Pick<StockItem, 'currentStock'> & Partial<Pick<StockItem, 'serviceStation' | 'liquorType'>>,
+  item: Pick<StockItem, 'currentStock'> &
+    Partial<Pick<StockItem, 'serviceStation' | 'liquorType' | 'tracksStock'>>,
 ): boolean {
   if (!tracksStock(item)) {
     return false;
@@ -274,7 +352,7 @@ export function isOutOfStock(
 
 export function isLowStock(
   item: Pick<StockItem, 'currentStock' | 'lowStockThreshold'> &
-    Partial<Pick<StockItem, 'serviceStation' | 'liquorType'>>,
+    Partial<Pick<StockItem, 'serviceStation' | 'liquorType' | 'tracksStock'>>,
 ): boolean {
   if (!tracksStock(item)) {
     return false;
@@ -364,8 +442,15 @@ export function isKitchenItem(item: { serviceStation?: string; liquorType?: stri
   return resolveServiceStation(item.serviceStation, item.liquorType) === 'kitchen';
 }
 
-/** Kitchen menu dishes are not inventory-tracked (Excel NA for stock fields). */
-export function tracksStock(item: { serviceStation?: string; liquorType?: string }): boolean {
+/** Prefer explicit flag; legacy kitchen rows do not track stock. */
+export function tracksStock(item: {
+  serviceStation?: string;
+  liquorType?: string;
+  tracksStock?: boolean;
+}): boolean {
+  if (typeof item.tracksStock === 'boolean') {
+    return item.tracksStock;
+  }
   return !isKitchenItem(item);
 }
 
@@ -380,11 +465,14 @@ export type OrderCatalogSection = ServiceStation;
 
 export const TOP_SELLERS_LIMIT = 8;
 
+/** Stock-page department split (exclusive prep station). */
 export function filterOrderSection(items: StockItem[], section: OrderCatalogSection): StockItem[] {
-  return items.filter((item) => (section === 'kitchen' ? isKitchenItem(item) : !isKitchenItem(item)));
+  return items.filter((item) =>
+    section === 'kitchen' ? isKitchenItem(item) : !isKitchenItem(item),
+  );
 }
 
-/** Search matches serial number, item code, or display names (not brand/type). */
+/** Search matches serial number or display names (not brand/type). */
 export function filterOrderSearch(items: StockItem[], query: string): StockItem[] {
   const needle = query.trim().toLowerCase();
   if (!needle) {
@@ -392,6 +480,11 @@ export function filterOrderSearch(items: StockItem[], query: string): StockItem[
   }
 
   return items.filter((item) => matchesItemSearch(item, needle));
+}
+
+/** Unified order search — all catalog items, no station tab. */
+export function filterOrderCatalogAll(items: StockItem[], query: string): StockItem[] {
+  return sortOrderCatalog(filterOrderSearch(items, query));
 }
 
 export function filterOrderCatalog(
@@ -406,7 +499,7 @@ export function sortOrderCatalog(items: StockItem[]): StockItem[] {
   return [...items].sort(
     (left, right) =>
       left.serialNo - right.serialNo ||
-      left.itemCode.localeCompare(right.itemCode, undefined, { sensitivity: 'base' }),
+      left.nameEn.localeCompare(right.nameEn, undefined, { sensitivity: 'base' }),
   );
 }
 
@@ -440,7 +533,7 @@ export function pickTopSellers(
     if (stockDelta !== 0) {
       return stockDelta;
     }
-    return left.itemCode.localeCompare(right.itemCode);
+    return left.serialNo - right.serialNo;
   });
 
   for (const item of leftovers) {
@@ -466,7 +559,7 @@ export function filterStock(items: StockItem[], query: string): StockItem[] {
   );
 }
 
-/** Fast stock-entry search: serial number, item code, or display names. */
+/** Fast stock-entry search: serial number or display names. */
 export function filterStockEntrySearch(items: StockItem[], query: string): StockItem[] {
   const needle = query.trim().toLowerCase();
   if (!needle) {
@@ -477,7 +570,7 @@ export function filterStockEntrySearch(items: StockItem[], query: string): Stock
 }
 
 export function matchesItemSearch(item: StockItem, needle: string): boolean {
-  return [String(item.serialNo), item.itemCode, item.nameEn, item.nameMr].some((value) =>
+  return [String(item.serialNo), item.nameEn, item.nameMr].some((value) =>
     value.toLowerCase().includes(needle),
   );
 }
@@ -510,7 +603,7 @@ export function groupStock(items: StockItem[], typeOrder: readonly string[] = DE
           left.brand.localeCompare(right.brand, undefined, { sensitivity: 'base' }) ||
           left.volumeMl - right.volumeMl ||
           left.nameEn.localeCompare(right.nameEn, undefined, { sensitivity: 'base' }) ||
-          left.itemCode.localeCompare(right.itemCode),
+          left.serialNo - right.serialNo,
       );
     return data.length > 0 ? [{ liquorType, data }] : [];
   });
@@ -631,17 +724,16 @@ export function buildPurchaseRecord(input: PurchaseFormInput): PurchaseDraft {
 }
 
 export function parseCatalogItem(input: CatalogItemInput): CatalogItemDraft {
-  const itemCode = input.itemCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (!/^[A-Z0-9]{2,12}$/.test(itemCode)) {
-    throw new InventoryValidationError('item-code');
-  }
-
   const nameEn = cleanLabel(input.nameEn, 'name');
   const nameMr = cleanLabel(input.nameMr, 'name');
   const brand = cleanLabel(input.brand, 'brand');
   const liquorType = cleanLabel(input.liquorType, 'type');
   const subType = cleanLabel(input.subType, 'type');
-  const serviceStation = resolveServiceStation(input.serviceStation, liquorType);
+  if (!isServiceStation(input.serviceStation)) {
+    throw new InventoryValidationError('station');
+  }
+  const serviceStation = input.serviceStation;
+  const tracksStockFlag = Boolean(input.tracksStock);
 
   let volumeMl: number;
   if (!strengthRequiresVolume(subType)) {
@@ -674,7 +766,7 @@ export function parseCatalogItem(input: CatalogItemInput): CatalogItemDraft {
 
   const thresholdRaw = input.lowStockThreshold.trim();
   let lowStockThreshold: number;
-  if (isNotApplicable(thresholdRaw) || (serviceStation === 'kitchen' && thresholdRaw === '')) {
+  if (!tracksStockFlag || isNotApplicable(thresholdRaw) || thresholdRaw === '') {
     lowStockThreshold = 0;
   } else {
     lowStockThreshold = Number(thresholdRaw);
@@ -685,7 +777,7 @@ export function parseCatalogItem(input: CatalogItemInput): CatalogItemDraft {
 
   const stockRaw = (input.initialStock ?? '0').trim() || '0';
   let initialStock: number;
-  if (isNotApplicable(stockRaw)) {
+  if (!tracksStockFlag || isNotApplicable(stockRaw)) {
     initialStock = 0;
   } else {
     initialStock = Number(stockRaw);
@@ -695,13 +787,13 @@ export function parseCatalogItem(input: CatalogItemInput): CatalogItemDraft {
   }
 
   return {
-    itemCode,
     nameEn,
     nameMr,
     brand,
     liquorType,
     subType,
     serviceStation,
+    tracksStock: tracksStockFlag,
     volumeMl,
     purchasePrice: purchasePaise / 100,
     sellingPrice: sellingPaise / 100,

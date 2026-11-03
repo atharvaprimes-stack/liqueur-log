@@ -7,7 +7,6 @@ export type TableRequest = {
   tenantId: string;
   tableId: string;
   itemId: string;
-  itemCode: string;
   nameEn: string;
   nameMr: string;
   quantity: number;

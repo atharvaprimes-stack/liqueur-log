@@ -3,7 +3,7 @@ import { mapUser, type UserRow } from '../local/rows';
 import type { StaffGateway, StaffRecord } from '../../domain/usecases/ManageStaffUseCase';
 import { hashMpin } from '../../security/mpin';
 import { enqueueStaffSync } from '../remote/syncStaff';
-import { syncNow } from '../sync/engine';
+import { pushNow } from '../sync/engine';
 import { isUserRole } from '../../domain/models/auth';
 
 export const staffGateway: StaffGateway = {
@@ -106,6 +106,6 @@ async function commitStaff(record: StaffRecord): Promise<'ok' | 'duplicate' | 'r
     throw error;
   }
 
-  void syncNow();
+  void pushNow();
   return 'ok';
 }

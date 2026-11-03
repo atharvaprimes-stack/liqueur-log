@@ -1,9 +1,10 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 
 import { useAuth } from '../context/auth-context';
 import { loadDashboard } from '../data/repositories/dashboardRepository';
-import { syncNow } from '../data/sync/engine';
+import { scheduleBackgroundSync } from '../data/sync/engine';
+import { onLedgerUpdated } from '../data/sync/ledgerEvents';
 import type { DashboardSnapshot } from '../domain/models/dashboard';
 
 export function useDashboard(): {
@@ -18,7 +19,7 @@ export function useDashboard(): {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  const reload = useCallback(async () => {
+  const reloadLocal = useCallback(async () => {
     if (!tenantId) {
       setSnapshot(null);
       setError(false);
@@ -26,7 +27,6 @@ export function useDashboard(): {
     }
 
     try {
-      await syncNow().catch(() => undefined);
       const next = await loadDashboard(tenantId);
       setSnapshot(next);
       setError(false);
@@ -34,6 +34,21 @@ export function useDashboard(): {
       setError(true);
     }
   }, [tenantId]);
+
+  useEffect(() => onLedgerUpdated(() => {
+    void reloadLocal().catch(() => undefined);
+  }), [reloadLocal]);
+
+  const reload = useCallback(async () => {
+    await reloadLocal();
+    if (!tenantId) {
+      return;
+    }
+    const didFull = await scheduleBackgroundSync({ force: true });
+    if (didFull) {
+      await reloadLocal();
+    }
+  }, [reloadLocal, tenantId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -45,16 +60,29 @@ export function useDashboard(): {
       }
 
       let active = true;
-      void reload().finally(() => {
-        if (active) {
-          setIsLoading(false);
+      void reloadLocal()
+        .catch(() => {
+          if (active) {
+            setError(true);
+          }
+        })
+        .finally(() => {
+          if (active) {
+            setIsLoading(false);
+          }
+        });
+
+      void scheduleBackgroundSync().then((didFull) => {
+        if (active && didFull) {
+          return reloadLocal();
         }
+        return undefined;
       });
 
       return () => {
         active = false;
       };
-    }, [reload, tenantId]),
+    }, [reloadLocal, tenantId]),
   );
 
   return { snapshot, isLoading, error, reload };

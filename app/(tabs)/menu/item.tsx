@@ -21,7 +21,7 @@ import { leaveScreen } from '../../../src/navigation/leave';
 import { useAuth } from '../../../src/context/AuthContext';
 import { inventoryErrorCode } from '../../../src/domain/errors';
 import {
-  defaultServiceStation,
+  defaultStationDefaults,
   itemNames,
   knownTermLabel,
   strengthRequiresVolume,
@@ -33,13 +33,13 @@ import { useCatalog } from '../../../src/hooks/useCatalog';
 import { useTheme } from '../../../src/theme/theme-context';
 
 const EMPTY_FORM: CatalogItemInput = {
-  itemCode: '',
   nameEn: '',
   nameMr: '',
   brand: '',
   liquorType: 'NA',
   subType: 'NA',
   serviceStation: 'bar',
+  tracksStock: true,
   volumeMl: '',
   purchasePrice: '',
   sellingPrice: '',
@@ -213,6 +213,37 @@ function StationSegment({
   );
 }
 
+function TrackStockToggle({
+  value,
+  onChange,
+  label,
+  hint,
+}: {
+  value: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+  hint: string;
+}) {
+  return (
+    <View>
+      <Pressable
+        accessibilityRole="switch"
+        accessibilityState={{ checked: value }}
+        onPress={() => onChange(!value)}
+        className="flex-row items-center justify-between rounded-lg border border-line bg-surface px-3 py-3"
+      >
+        <Text className="text-sm font-semibold text-ink">{label}</Text>
+        <View
+          className={`h-7 w-12 justify-center rounded-full px-0.5 ${value ? 'bg-accent' : 'bg-line'}`}
+        >
+          <View className={`h-6 w-6 rounded-full bg-canvas ${value ? 'self-end' : 'self-start'}`} />
+        </View>
+      </Pressable>
+      <Text className="mt-1 text-xs text-muted">{hint}</Text>
+    </View>
+  );
+}
+
 export default function ItemFormScreen() {
   const { t, i18n } = useTranslation();
   const { palette } = useTheme();
@@ -234,13 +265,13 @@ export default function ItemFormScreen() {
     }
     seeded.current = true;
     setForm({
-      itemCode: existing.itemCode,
       nameEn: existing.nameEn,
       nameMr: existing.nameMr,
       brand: existing.brand,
       liquorType: existing.liquorType,
       subType: existing.subType,
       serviceStation: existing.serviceStation,
+      tracksStock: existing.tracksStock,
       volumeMl: String(existing.volumeMl),
       purchasePrice: formatRupeeInput(existing.purchasePrice),
       sellingPrice: formatRupeeInput(existing.sellingPrice),
@@ -263,7 +294,7 @@ export default function ItemFormScreen() {
         ...current,
         liquorType,
         subType,
-        serviceStation: defaultServiceStation(liquorType),
+        ...defaultStationDefaults(liquorType),
       };
     });
   }, [itemId, itemStrengths, itemTypes]);
@@ -364,27 +395,31 @@ export default function ItemFormScreen() {
 
           <StationSegment
             value={form.serviceStation}
-            onChange={(serviceStation) => patch({ serviceStation })}
+            onChange={(serviceStation) =>
+              patch({
+                serviceStation,
+                tracksStock:
+                  serviceStation === 'kitchen'
+                    ? false
+                    : form.serviceStation === 'kitchen'
+                      ? true
+                      : form.tracksStock,
+              })
+            }
             barLabel={t('catalog.stationBar')}
             kitchenLabel={t('catalog.stationKitchen')}
             hint={t('catalog.station')}
           />
 
+          <TrackStockToggle
+            value={form.tracksStock}
+            onChange={(tracksStock) => patch({ tracksStock })}
+            label={t('catalog.tracksStock')}
+            hint={t('catalog.tracksStockHint')}
+          />
+
           <FormCard title={t('catalog.basicInfo')}>
-            <Field label={t('catalog.code')} className="mt-0">
-              <TextInput
-                value={form.itemCode}
-                onChangeText={(value) =>
-                  patch({ itemCode: value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) })
-                }
-                autoCapitalize="characters"
-                autoCorrect={false}
-                placeholder={t('catalog.codePlaceholder')}
-                placeholderTextColor={palette.muted}
-                className={inputClass}
-              />
-            </Field>
-            <View className="mt-3 flex-row gap-3">
+            <View className="flex-row gap-3">
               <Field label={t('catalog.nameEn')} className="min-w-0 flex-1" alignLabel>
                 <TextInput
                   value={form.nameEn}
@@ -429,7 +464,7 @@ export default function ItemFormScreen() {
                     onPress={() =>
                       patch({
                         liquorType: type,
-                        serviceStation: defaultServiceStation(type),
+                        ...defaultStationDefaults(type),
                       })
                     }
                   />
@@ -479,7 +514,7 @@ export default function ItemFormScreen() {
             </View>
 
             <View className="mt-3 flex-row gap-3">
-              {isCreate ? (
+              {isCreate && form.tracksStock ? (
                 <Field label={t('catalog.initialStock')} className="min-w-0 flex-1" alignLabel>
                   <TextInput
                     value={form.initialStock}
@@ -507,16 +542,18 @@ export default function ItemFormScreen() {
                   />
                 </Field>
               ) : null}
-              <Field label={t('catalog.threshold')} className="min-w-0 flex-1" alignLabel>
-                <TextInput
-                  value={form.lowStockThreshold}
-                  onChangeText={(value) => patch({ lowStockThreshold: value.replace(/\D/g, '').slice(0, 4) })}
-                  keyboardType="number-pad"
-                  placeholder="0"
-                  placeholderTextColor={palette.muted}
-                  className={inputClass}
-                />
-              </Field>
+              {form.tracksStock ? (
+                <Field label={t('catalog.threshold')} className="min-w-0 flex-1" alignLabel>
+                  <TextInput
+                    value={form.lowStockThreshold}
+                    onChangeText={(value) => patch({ lowStockThreshold: value.replace(/\D/g, '').slice(0, 4) })}
+                    keyboardType="number-pad"
+                    placeholder="0"
+                    placeholderTextColor={palette.muted}
+                    className={inputClass}
+                  />
+                </Field>
+              ) : null}
             </View>
           </FormCard>
 
