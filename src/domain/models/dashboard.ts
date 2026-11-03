@@ -12,6 +12,7 @@ export type DashboardSalesPoint = {
   /** Bucket key: `YYYY-MM-DD` for last-7-days, or `YYYY-MM` for last-12-months. */
   bucket: string;
   amount: number;
+  orderCount: number;
 };
 
 export type DashboardRecentOrder = {

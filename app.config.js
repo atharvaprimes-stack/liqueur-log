@@ -94,6 +94,9 @@ module.exports = {
   },
   android: {
     package: 'com.liqueurlog.app',
+    versionCode: 2,
+    version: '1.0.1',
+    allowBackup: false,
     permissions: [
       'android.permission.RECORD_AUDIO',
       'android.permission.POST_NOTIFICATIONS',
@@ -109,6 +112,7 @@ module.exports = {
       backgroundColor: '#000000',
     },
   },
+  version: '1.0.1',
   web: {
     bundler: 'metro',
     output: 'single',

@@ -2,7 +2,7 @@ import type { ServiceStation } from './inventory';
 
 export const ORDER_TYPES = ['TABLE', 'COUNTER'] as const;
 export const ORDER_STATUSES = ['OPEN', 'PAID'] as const;
-export const PAYMENT_METHODS = ['Cash', 'UPI', 'Other'] as const;
+export const PAYMENT_METHODS = ['Cash', 'UPI', 'Split', 'Other'] as const;
 
 export type OrderType = (typeof ORDER_TYPES)[number];
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
@@ -29,14 +29,46 @@ export type OrderSummary = {
   status: OrderStatus;
   totalAmount: number;
   paidAmount: number;
+  cashAmount: number;
+  upiAmount: number;
   paymentMethod: PaymentMethod | null;
   isCredit: boolean;
   sequence: string;
   createdAt: number;
+  /** Set when a draft bill has been printed; cleared when the order is paid. */
+  billedAt: number | null;
   closedAt: number | null;
   /** Total units on the order (sum of line quantities). */
   itemCount: number;
 };
+
+/** Full settlement from independent Cash + UPI amounts. */
+export function deriveSettlement(
+  cashAmount: number,
+  upiAmount: number,
+  totalAmount: number,
+): { method: PaymentMethod; paidAmount: number; cashAmount: number; upiAmount: number } | null {
+  const cashPaise = Math.round(cashAmount * 100);
+  const upiPaise = Math.round(upiAmount * 100);
+  const totalPaise = Math.round(totalAmount * 100);
+  if (
+    !Number.isInteger(cashPaise) ||
+    !Number.isInteger(upiPaise) ||
+    cashPaise < 0 ||
+    upiPaise < 0 ||
+    cashPaise + upiPaise !== totalPaise
+  ) {
+    return null;
+  }
+  const method: PaymentMethod =
+    cashPaise > 0 && upiPaise > 0 ? 'Split' : cashPaise > 0 ? 'Cash' : 'UPI';
+  return {
+    method,
+    paidAmount: totalPaise / 100,
+    cashAmount: cashPaise / 100,
+    upiAmount: upiPaise / 100,
+  };
+}
 
 export type SaleOrder = OrderSummary & {
   lines: OrderLine[];

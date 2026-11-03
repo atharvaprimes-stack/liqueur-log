@@ -23,15 +23,15 @@ import {
 import {
   isOrderStatus,
   isOrderType,
+  deriveSettlement,
   isPaymentMethod,
   type OrderLine,
   type OrderSummary,
-  type PaymentMethod,
   type SaleOrder,
 } from '../../domain/models/orders';
 
 const ORDER_COLUMNS = `id, tenant_id, table_id, order_type, status, total_amount, paid_amount,
-  payment_method, is_credit, order_sequence_string, created_at, closed_at`;
+  cash_amount, upi_amount, payment_method, is_credit, order_sequence_string, created_at, billed_at, closed_at`;
 
 const LINE_COLUMNS = `id, item_id, name_en, name_mr, liquor_type, service_station, volume_ml, quantity, unit_price`;
 
@@ -43,10 +43,13 @@ type OrderRow = {
   status: string;
   total_amount: number;
   paid_amount: number;
+  cash_amount: number;
+  upi_amount: number;
   payment_method: string | null;
   is_credit: number;
   order_sequence_string: string;
   created_at: number;
+  billed_at: number | null;
   closed_at: number | null;
   item_count?: number | null;
 };
@@ -396,17 +399,61 @@ export async function releaseEmptyOrder(input: {
   requestSync();
 }
 
+/** Records that a draft bill was printed; order stays OPEN awaiting payment. */
+export async function markOrderBilled(input: {
+  tenantId: string;
+  actorId: string;
+  orderId: string;
+}): Promise<SaleOrder> {
+  const saved = await withLockedTransaction(async (database) => {
+    await assertActor(database, input.tenantId, input.actorId);
+    const order = await requireOpenOrder(database, input.tenantId, input.orderId);
+    const lines = await database.getAllAsync<{ quantity: number }>(
+      'SELECT quantity FROM order_items WHERE order_id = ?',
+      [order.id],
+    );
+    if (lines.length === 0) {
+      throw new OrderValidationError('empty');
+    }
+
+    const billedAt = Date.now();
+    const updated = await database.runAsync(
+      `UPDATE orders
+       SET billed_at = ?, updated_at = ?
+       WHERE id = ? AND tenant_id = ? AND status = 'OPEN'`,
+      [billedAt, billedAt, order.id, input.tenantId],
+    );
+    if (updated.changes !== 1) {
+      throw new OrderValidationError('closed');
+    }
+
+    const saved = await readOrder(database, input.tenantId, order.id);
+    await insertActivity(database, {
+      tenantId: input.tenantId,
+      actorId: input.actorId,
+      action: 'order.billed',
+      entity: 'orders',
+      entityId: order.id,
+      detail: {
+        sequence: saved.sequence,
+        totalAmount: saved.totalAmount,
+        ...(saved.tableId ? { tableId: saved.tableId } : {}),
+      },
+    });
+    await enqueueUpsert(database, 'orders', order.id);
+    return saved;
+  });
+  requestSync();
+  return saved;
+}
+
 export async function settleOrder(input: {
   tenantId: string;
   actorId: string;
   orderId: string;
-  method: PaymentMethod;
-  paidAmount: number;
+  cashAmount: number;
+  upiAmount: number;
 }): Promise<SaleOrder> {
-  if (!isPaymentMethod(input.method)) {
-    throw new OrderValidationError('payment');
-  }
-
   const saved = await withLockedTransaction(async (database) => {
     await assertActor(database, input.tenantId, input.actorId);
     const order = await requireOpenOrder(database, input.tenantId, input.orderId);
@@ -419,9 +466,8 @@ export async function settleOrder(input: {
     }
 
     const total = await syncTotal(database, order.id);
-    const totalPaise = Math.round(total * 100);
-    const paidPaise = Math.round(input.paidAmount * 100);
-    if (!Number.isInteger(paidPaise) || paidPaise < 0 || paidPaise > totalPaise) {
+    const settlement = deriveSettlement(input.cashAmount, input.upiAmount, total);
+    if (!settlement) {
       throw new OrderValidationError('amount');
     }
 
@@ -431,16 +477,19 @@ export async function settleOrder(input: {
        SET status = 'PAID',
            total_amount = ?,
            paid_amount = ?,
+           cash_amount = ?,
+           upi_amount = ?,
            payment_method = ?,
-           is_credit = ?,
+           is_credit = 0,
            closed_at = ?,
            updated_at = ?
        WHERE id = ? AND tenant_id = ? AND status = 'OPEN'`,
       [
-        totalPaise / 100,
-        paidPaise / 100,
-        input.method,
-        paidPaise < totalPaise ? 1 : 0,
+        settlement.paidAmount,
+        settlement.paidAmount,
+        settlement.cashAmount,
+        settlement.upiAmount,
+        settlement.method,
         closedAt,
         closedAt,
         order.id,
@@ -462,8 +511,10 @@ export async function settleOrder(input: {
         sequence: saved.sequence,
         totalAmount: saved.totalAmount,
         paidAmount: saved.paidAmount,
-        paymentMethod: input.method,
-        credit: saved.isCredit ? 1 : 0,
+        cashAmount: saved.cashAmount,
+        upiAmount: saved.upiAmount,
+        paymentMethod: settlement.method,
+        credit: 0,
         ...(saved.tableId ? { tableId: saved.tableId } : {}),
       },
     });
@@ -481,11 +532,12 @@ async function insertOrder(
   const orderId = newId();
   const createdAt = Date.now();
   const sequence = await allocateOrderSequence(database, input.tenantId, createdAt);
-    await database.runAsync(
+  await database.runAsync(
     `INSERT INTO orders (
        id, tenant_id, table_id, order_type, status, total_amount, paid_amount,
-       payment_method, is_credit, order_sequence_string, created_at, closed_at, created_by, updated_at
-     ) VALUES (?, ?, ?, ?, 'OPEN', 0, 0, NULL, 0, ?, ?, NULL, ?, ?)`,
+       cash_amount, upi_amount, payment_method, is_credit, order_sequence_string,
+       created_at, billed_at, closed_at, created_by, updated_at
+     ) VALUES (?, ?, ?, ?, 'OPEN', 0, 0, 0, 0, NULL, 0, ?, ?, NULL, NULL, ?, ?)`,
     [orderId, input.tenantId, input.tableId, input.orderType, sequence, createdAt, input.actorId, createdAt],
   );
   await enqueueUpsert(database, 'orders', orderId);
@@ -724,10 +776,13 @@ function mapSummary(row: OrderRow): OrderSummary {
     status: row.status,
     totalAmount: Number(row.total_amount),
     paidAmount: Number(row.paid_amount),
+    cashAmount: Number(row.cash_amount) || 0,
+    upiAmount: Number(row.upi_amount) || 0,
     paymentMethod: row.payment_method,
     isCredit: row.is_credit === 1,
     sequence: row.order_sequence_string,
     createdAt: Number(row.created_at),
+    billedAt: row.billed_at === null || row.billed_at === undefined ? null : Number(row.billed_at),
     closedAt: row.closed_at === null ? null : Number(row.closed_at),
     itemCount: Math.max(0, Math.round(Number(row.item_count) || 0)),
   };

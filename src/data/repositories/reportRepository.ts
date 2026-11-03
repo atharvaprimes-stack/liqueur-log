@@ -100,8 +100,8 @@ export async function loadReportSource(tenantId: string, bounds: ReportBounds): 
       `SELECT ${localDay('closed_at')} AS day,
               COUNT(*) AS bill_count,
               COALESCE(SUM(total_amount), 0) AS sales_amount,
-              COALESCE(SUM(CASE WHEN payment_method = 'Cash' THEN paid_amount ELSE 0 END), 0) AS cash_amount,
-              COALESCE(SUM(CASE WHEN payment_method = 'UPI' THEN paid_amount ELSE 0 END), 0) AS upi_amount,
+              COALESCE(SUM(cash_amount), 0) AS cash_amount,
+              COALESCE(SUM(upi_amount), 0) AS upi_amount,
               COALESCE(SUM(CASE WHEN payment_method = 'Other' THEN paid_amount ELSE 0 END), 0) AS other_amount,
               COALESCE(SUM(total_amount - paid_amount), 0) AS credit_amount
        FROM orders

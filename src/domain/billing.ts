@@ -31,6 +31,7 @@ export type ReceiptPayload = {
   totalAmount: number;
   paidAmount: number;
   balanceAmount: number;
+  /** Empty when the bill is a draft (not yet settled). */
   paymentLabel: string;
   isCredit: boolean;
   text: string;
@@ -168,6 +169,26 @@ export function formatReceiptAmount(amount: number): string {
   return `${negative ? '-' : ''}₹${whole}.${fraction}`;
 }
 
+/** Human-readable settlement line for Cash / UPI / Split. */
+export function settlementPaymentLabel(
+  cashAmount: number,
+  upiAmount: number,
+  labels: { cash: string; upi: string; split: (cash: string, upi: string) => string },
+): string {
+  const cashPaise = Math.round(cashAmount * 100);
+  const upiPaise = Math.round(upiAmount * 100);
+  if (cashPaise > 0 && upiPaise > 0) {
+    return labels.split(formatReceiptAmount(cashPaise / 100), formatReceiptAmount(upiPaise / 100));
+  }
+  if (cashPaise > 0) {
+    return labels.cash;
+  }
+  if (upiPaise > 0) {
+    return labels.upi;
+  }
+  return labels.cash;
+}
+
 export function formatReceiptMath(quantity: number, unitPrice: number, pcs: string): string {
   return `${quantity} ${pcs} x ${formatReceiptAmount(unitPrice)}`;
 }
@@ -248,10 +269,16 @@ export function buildReceipt(input: {
   }
 
   rows.push(equals, pair(input.labels.total, formatReceiptAmount(input.totalAmount)));
-  if (input.isCredit) {
-    rows.push(pair(input.paymentLabel, formatReceiptAmount(input.paidAmount)), pair(input.labels.credit, formatReceiptAmount(balanceAmount)));
-  } else {
-    rows.push(center(input.paymentLabel));
+  const paymentLabel = input.paymentLabel.trim();
+  if (paymentLabel) {
+    if (input.isCredit) {
+      rows.push(
+        pair(paymentLabel, formatReceiptAmount(input.paidAmount)),
+        pair(input.labels.credit, formatReceiptAmount(balanceAmount)),
+      );
+    } else {
+      rows.push(center(paymentLabel));
+    }
   }
   rows.push(dash, center(input.labels.thanks), center(input.labels.poweredBy));
 

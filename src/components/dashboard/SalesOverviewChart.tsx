@@ -9,6 +9,8 @@ import type { DashboardSalesPoint } from '../../domain/models/dashboard';
 import { useTheme } from '../../theme/theme-context';
 import { getCardShadow } from './cardShadow';
 
+type ChartMetric = 'saleValue' | 'orderCount';
+
 type SalesOverviewChartProps = {
   last7Days: DashboardSalesPoint[];
   last12Months: DashboardSalesPoint[];
@@ -28,21 +30,27 @@ type ChartDatum = {
 export function SalesOverviewChart({ last7Days, last12Months, locale }: SalesOverviewChartProps) {
   const { t } = useTranslation();
   const { palette } = useTheme();
+  const [metric, setMetric] = useState<ChartMetric>('saleValue');
   const [period, setPeriod] = useState<ChartPeriod>('days7');
   const [width, setWidth] = useState(0);
 
   const series = period === 'days7' ? last7Days : last12Months;
-  const totalSales = useMemo(() => series.reduce((sum, point) => sum + point.amount, 0), [series]);
-  const peakAmount = useMemo(() => Math.max(0, ...series.map((point) => point.amount)), [series]);
+  const metricValues = useMemo(
+    () => series.map((point) => (metric === 'saleValue' ? point.amount : point.orderCount)),
+    [metric, series],
+  );
+  const total = useMemo(() => metricValues.reduce((sum, value) => sum + value, 0), [metricValues]);
+  const peakValue = useMemo(() => Math.max(0, ...metricValues), [metricValues]);
 
   const data = useMemo<ChartDatum[]>(
     () =>
-      series.map((point) => {
+      series.map((point, index) => {
+        const value = metricValues[index] ?? 0;
         const shortLabel = formatAxisLabel(point.bucket, period, locale);
         const bucketLabel = formatTooltipLabel(point.bucket, period, locale);
-        const isPeak = peakAmount > 0 && point.amount === peakAmount;
+        const isPeak = peakValue > 0 && value === peakValue;
         return {
-          value: point.amount,
+          value,
           label: shortLabel,
           bucketLabel,
           dataPointColor: isPeak ? palette.idle : palette.accent,
@@ -51,19 +59,21 @@ export function SalesOverviewChart({ last7Days, last12Months, locale }: SalesOve
           focusedDataPointRadius: isPeak ? 8 : 6,
         };
       }),
-    [locale, palette.accent, palette.idle, peakAmount, period, series],
+    [locale, metricValues, palette.accent, palette.idle, peakValue, period, series],
   );
 
   const chartWidth = Math.max(width - 8, 240);
   const spacing =
     data.length <= 1 ? chartWidth * 0.45 : Math.max(22, (chartWidth - 40) / Math.max(data.length - 1, 1));
+  const formatValue = (value: number) =>
+    metric === 'saleValue' ? formatInr(value) : t('home.chart.ordersValue', { count: value });
 
   return (
     <View className="rounded-2xl border border-line bg-surface p-4" style={getCardShadow(palette)}>
       <View className="flex-row items-start justify-between gap-3">
         <View className="min-w-0 flex-1">
           <Text className="text-base font-bold text-ink">{t('home.salesOverview')}</Text>
-          <Text className="mt-1 text-sm font-semibold text-muted">{formatInr(totalSales)}</Text>
+          <Text className="mt-1 text-sm font-semibold text-muted">{formatValue(total)}</Text>
         </View>
       </View>
 
@@ -77,6 +87,19 @@ export function SalesOverviewChart({ last7Days, last12Months, locale }: SalesOve
           label={t('home.chart.months12')}
           selected={period === 'months12'}
           onPress={() => setPeriod('months12')}
+        />
+      </View>
+
+      <View className="mt-2 flex-row rounded-2xl bg-canvas p-1">
+        <PeriodToggle
+          label={t('home.chart.saleValue')}
+          selected={metric === 'saleValue'}
+          onPress={() => setMetric('saleValue')}
+        />
+        <PeriodToggle
+          label={t('home.chart.orderCount')}
+          selected={metric === 'orderCount'}
+          onPress={() => setMetric('orderCount')}
         />
       </View>
 
@@ -116,8 +139,10 @@ export function SalesOverviewChart({ last7Days, last12Months, locale }: SalesOve
               rulesColor={palette.line}
               rulesType="solid"
               noOfSections={4}
-              maxValue={Math.max(peakAmount, 1) * 1.18}
-              formatYLabel={(value) => compactInr(Number(value))}
+              maxValue={Math.max(peakValue, 1) * 1.18}
+              formatYLabel={(value) =>
+                metric === 'saleValue' ? compactInr(Number(value)) : compactCount(Number(value))
+              }
               pointerConfig={{
                 pointerStripHeight: 168,
                 pointerStripColor: palette.line,
@@ -138,7 +163,7 @@ export function SalesOverviewChart({ last7Days, last12Months, locale }: SalesOve
                         {dayOrMonth}
                       </Text>
                       <Text className="mt-0.5 text-xs font-bold" style={{ color: palette.canvas }}>
-                        {formatInr(value)}
+                        {formatValue(value)}
                       </Text>
                     </View>
                   );
@@ -151,11 +176,12 @@ export function SalesOverviewChart({ last7Days, last12Months, locale }: SalesOve
         )}
       </View>
 
-      {peakAmount > 0 ? (
+      {peakValue > 0 ? (
         <Text className="mt-2 text-xs font-semibold text-muted">
-          {t('home.chart.peakHint', {
-            amount: formatInr(peakAmount),
-            when: peakLabel(series, period, locale),
+          {t(metric === 'saleValue' ? 'home.chart.peakHint' : 'home.chart.peakOrdersHint', {
+            amount: formatInr(peakValue),
+            count: peakValue,
+            when: peakLabel(series, metric, period, locale),
           })}
         </Text>
       ) : null}
@@ -222,9 +248,14 @@ function formatTooltipLabel(bucket: string, period: ChartPeriod, locale: string)
   return date.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
 }
 
-function peakLabel(series: DashboardSalesPoint[], period: ChartPeriod, locale: string): string {
-  const peak = Math.max(0, ...series.map((point) => point.amount));
-  const point = series.find((entry) => entry.amount === peak);
+function peakLabel(
+  series: DashboardSalesPoint[],
+  metric: ChartMetric,
+  period: ChartPeriod,
+  locale: string,
+): string {
+  const peak = Math.max(0, ...series.map((point) => (metric === 'saleValue' ? point.amount : point.orderCount)));
+  const point = series.find((entry) => (metric === 'saleValue' ? entry.amount : entry.orderCount) === peak);
   if (!point) {
     return '';
   }
@@ -240,6 +271,13 @@ function compactInr(value: number): string {
   }
   if (value >= 1000) {
     return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}k`;
+  }
+  return String(Math.round(value));
+}
+
+function compactCount(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0';
   }
   return String(Math.round(value));
 }

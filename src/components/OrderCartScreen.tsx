@@ -24,7 +24,7 @@ import {
   volumeMessage,
   type StockItem,
 } from '../domain/models/inventory';
-import { balancePaise, type OrderLine, type PaymentMethod } from '../domain/models/orders';
+import { balancePaise, type OrderLine } from '../domain/models/orders';
 import type { TableRequest } from '../domain/models/tableRequests';
 import { getOrder } from '../data/repositories/orderRepository';
 import { useBilling } from '../hooks/useBilling';
@@ -34,7 +34,6 @@ import { useVoiceSearch } from '../hooks/useVoiceSearch';
 import { useAuth } from '../context/AuthContext';
 import { useBottomInset } from '../navigation/bottomInset';
 import { leaveScreen } from '../navigation/leave';
-import { afterModalDismissed } from '../printing/receiptFile';
 import { useTheme } from '../theme/theme-context';
 import { ActionRow } from './FormActions';
 import { PaymentSheet } from './PaymentSheet';
@@ -67,13 +66,23 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
     null,
   );
   const [closingBill, setClosingBill] = useState(false);
+  const [editingUnlocked, setEditingUnlocked] = useState(false);
   const order = cart.order;
-  const editable = order?.status === 'OPEN';
+  const isOpen = order?.status === 'OPEN';
+  const isBilled = Boolean(isOpen && order?.billedAt);
+  /** Open orders are editable until billed; after bill, only with the Edit toggle. */
+  const canMutate = Boolean(isOpen && (!isBilled || editingUnlocked));
   const searching = query.trim().length > 0;
   const busy = cart.busy || billing.isSubmitting || closingBill;
   const tableId = target.kind === 'table' ? target.tableId : order?.tableId;
   const pendingRequests =
-    editable && tableId ? tableRequests.pendingForTable(tableId) : [];
+    canMutate && tableId ? tableRequests.pendingForTable(tableId) : [];
+
+  useEffect(() => {
+    if (!isBilled) {
+      setEditingUnlocked(false);
+    }
+  }, [isBilled, order?.id]);
 
   const voice = useVoiceSearch((transcript) => {
     setQuery(transcript);
@@ -112,6 +121,9 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
 
   const onPickCatalogItem = useCallback(
     (item: StockItem, quantity = 1) => {
+      if (!canMutate) {
+        return;
+      }
       if (!Number.isInteger(quantity) || quantity < 1 || quantity > 9999) {
         setFormError('quantity');
         return;
@@ -136,7 +148,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
           setAddingItemId((current) => (current === item.id ? null : current));
         });
     },
-    [cart, pulseLine, searching],
+    [canMutate, cart, pulseLine, searching],
   );
 
   const unitsOnOrder = useCallback(
@@ -227,13 +239,58 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
     leaveScreen(parent);
   }, [cart, order, parent, tableRequests]);
 
-  const onPayAndClose = useCallback(() => {
+  const onCollectPayment = useCallback(() => {
     if (!order || order.lines.length === 0) {
       return;
     }
+    setEditingUnlocked(false);
     billing.clearError();
     setShareNotice(null);
     setPaymentOpen(true);
+  }, [billing, order]);
+
+  const onGenerateBill = useCallback(() => {
+    if (!order || order.lines.length === 0 || billing.isSubmitting) {
+      return;
+    }
+    const preview = billing.draftReceiptPreview(order);
+    if (!preview) {
+      setShareNotice('printFailed');
+      return;
+    }
+    void (async () => {
+      setShareNotice(null);
+      const ok = await billing.printPreview(preview);
+      if (!ok) {
+        setShareNotice('printFailed');
+        return;
+      }
+      try {
+        const billed = await billing.markBilled(order.id);
+        cart.remember(billed);
+        setEditingUnlocked(false);
+      } catch {
+        // Print succeeded; floor badge may lag until next successful mark.
+      }
+    })();
+  }, [billing, cart, order]);
+
+  const onReprintBill = useCallback(() => {
+    if (!order || order.lines.length === 0 || billing.isSubmitting) {
+      return;
+    }
+    const preview = billing.draftReceiptPreview(order);
+    if (!preview) {
+      setShareNotice('printFailed');
+      return;
+    }
+    void (async () => {
+      setShareNotice(null);
+      const ok = await billing.printPreview(preview);
+      if (!ok) {
+        setShareNotice('printFailed');
+      }
+    })();
   }, [billing, order]);
 
   const onSearchSubmit = async () => {
@@ -255,7 +312,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
     setFormError('unknown-item');
   };
 
-  const onCollect = async (payment: { method: PaymentMethod; paidAmount: number }) => {
+  const onCollect = async (payment: { cashAmount: number; upiAmount: number }) => {
     if (!order) {
       return;
     }
@@ -273,7 +330,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
 
   const onAcceptRequest = useCallback(
     async (request: TableRequest) => {
-      if (!editable || busy || requestBusyId) {
+      if (!canMutate || busy || requestBusyId) {
         return;
       }
       setRequestNotice(false);
@@ -298,12 +355,12 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
         setRequestBusyId(null);
       }
     },
-    [busy, cart, editable, pulseLine, requestBusyId, tableRequests],
+    [busy, canMutate, cart, pulseLine, requestBusyId, tableRequests],
   );
 
   const onRejectRequest = useCallback(
     async (request: TableRequest) => {
-      if (!editable || busy || requestBusyId) {
+      if (!canMutate || busy || requestBusyId) {
         return;
       }
       setRequestNotice(false);
@@ -318,11 +375,11 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
         setRequestBusyId(null);
       }
     },
-    [busy, editable, requestBusyId, tableRequests],
+    [busy, canMutate, requestBusyId, tableRequests],
   );
 
   const onAcceptAllRequests = useCallback(async () => {
-    if (!editable || busy || requestBusyId || pendingRequests.length === 0) {
+    if (!canMutate || busy || requestBusyId || pendingRequests.length === 0) {
       return;
     }
     setRequestNotice(false);
@@ -355,13 +412,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
     } finally {
       setRequestBusyId(null);
     }
-  }, [busy, cart, editable, pendingRequests, pulseLine, requestBusyId, tableRequests]);
-
-  const buildDraftPreview = billing.draftReceiptPreview;
-  const draftPreview = useCallback(
-    (method: PaymentMethod) => (order ? buildDraftPreview(order, method) : null),
-    [buildDraftPreview, order],
-  );
+  }, [busy, canMutate, cart, pendingRequests, pulseLine, requestBusyId, tableRequests]);
 
   if (!isReady) {
     return null;
@@ -416,12 +467,21 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
             >
               <OrderHeader title={title} billId={displayBillNumber(order.sequence)} total={formatInr(runningTotal)} />
 
-              {!editable ? (
+              {!isOpen ? (
                 <View className="mt-3 rounded-xl border border-line bg-surface p-3">
                   <Text className="text-sm font-semibold text-ink">{t('billing.closed')}</Text>
                   <Text className="mt-1 text-sm text-muted">
                     {t('billing.paid')} {formatInr(order.paidAmount)}
-                    {order.paymentMethod ? ` · ${t(`billing.methods.${order.paymentMethod}`)}` : ''}
+                    {order.paymentMethod === 'Split'
+                      ? ` · ${t('billing.methods.splitDetail', {
+                          cashLabel: t('billing.methods.Cash'),
+                          cashAmount: formatInr(order.cashAmount),
+                          upiLabel: t('billing.methods.UPI'),
+                          upiAmount: formatInr(order.upiAmount),
+                        })}`
+                      : order.paymentMethod
+                        ? ` · ${t(`billing.methods.${order.paymentMethod}`)}`
+                        : ''}
                   </Text>
                   {order.isCredit ? (
                     <Text className="mt-1 text-sm font-semibold text-danger">
@@ -431,10 +491,48 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                 </View>
               ) : null}
 
+              {isBilled ? (
+                <View className="mt-3 flex-row items-center justify-between gap-3 rounded-xl border border-line bg-surface px-3 py-2.5">
+                  <View className="min-w-0 flex-1">
+                    <Text className="text-sm font-semibold text-ink">{t('billing.payDueBanner')}</Text>
+                    <Text className="mt-0.5 text-xs text-muted">{t('billing.payDueBannerHint')}</Text>
+                  </View>
+                  <Pressable
+                    accessibilityRole="switch"
+                    accessibilityState={{ checked: editingUnlocked }}
+                    disabled={busy}
+                    onPress={() => {
+                      setEditingUnlocked((value) => !value);
+                      setQuery('');
+                      setFormError(null);
+                    }}
+                    className={`h-9 flex-row items-center gap-1.5 rounded-lg border px-3 disabled:opacity-50 ${
+                      editingUnlocked ? 'border-accent bg-accent' : 'border-line bg-canvas'
+                    }`}
+                  >
+                    <Ionicons
+                      name={editingUnlocked ? 'create' : 'create-outline'}
+                      size={16}
+                      color={editingUnlocked ? palette.accentInk : palette.ink}
+                    />
+                    <Text
+                      className={`text-sm font-semibold ${
+                        editingUnlocked ? 'text-accent-ink' : 'text-ink'
+                      }`}
+                    >
+                      {editingUnlocked ? t('billing.editingOn') : t('billing.editOrder')}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : null}
+
               {shareNotice === 'failed' ? <Text className="mt-2 text-sm text-danger">{t('billing.shareFailed')}</Text> : null}
               {shareNotice === 'downloaded' ? <Text className="mt-2 text-sm text-ink">{t('billing.downloaded')}</Text> : null}
+              {shareNotice === 'printFailed' ? (
+                <Text className="mt-2 text-sm text-danger">{t('billing.printFailed')}</Text>
+              ) : null}
 
-              {editable ? (
+              {canMutate ? (
                 <View className="mt-3 overflow-hidden rounded-lg border border-line bg-surface">
                   <View className="h-11 flex-row items-center px-3">
                     <Ionicons name="search" size={18} color={palette.muted} />
@@ -521,7 +619,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                 </Text>
               ) : null}
 
-              {editable && pendingRequests.length > 0 ? (
+              {canMutate && pendingRequests.length > 0 ? (
                 <IncomingRequestsPanel
                   requests={pendingRequests}
                   language={i18n.language}
@@ -554,7 +652,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                   lines={barLines}
                   serialNos={serialNos}
                   language={i18n.language}
-                  editable={editable}
+                  editable={canMutate}
                   busy={busy}
                   focusLineId={focusLineId}
                   rowOffsets={rowOffsets}
@@ -568,7 +666,7 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
                   lines={kitchenLines}
                   serialNos={serialNos}
                   language={i18n.language}
-                  editable={editable}
+                  editable={canMutate}
                   busy={busy}
                   focusLineId={focusLineId}
                   rowOffsets={rowOffsets}
@@ -586,28 +684,67 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
             className="border-t border-line bg-surface px-4 pt-3"
             style={{ paddingBottom: bottomInset + 12 }}
           >
-            {editable ? (
-              <View className="flex-row gap-3">
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={busy}
-                  onPress={onCancel}
-                  className="h-12 min-w-0 flex-1 items-center justify-center rounded-lg border border-line bg-canvas px-2 disabled:opacity-50"
-                >
-                  <Text className="text-center text-sm font-semibold text-muted" numberOfLines={1}>
-                    {t('common.cancel')}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={busy || displayLines.length === 0}
-                  onPress={onPayAndClose}
-                  className="h-12 min-w-0 flex-1 items-center justify-center rounded-lg bg-accent px-2 disabled:opacity-50"
-                >
-                  <Text className="text-center text-sm font-semibold text-accent-ink" numberOfLines={1}>
-                    {t('billing.payClose')}
-                  </Text>
-                </Pressable>
+            {isOpen ? (
+              <View className="gap-2">
+                {isBilled ? (
+                  <View className="flex-row gap-2">
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={busy}
+                      onPress={onCancel}
+                      className="h-12 min-w-0 flex-1 items-center justify-center rounded-lg border border-line bg-canvas px-2 disabled:opacity-50"
+                    >
+                      <Text className="text-center text-sm font-semibold text-muted" numberOfLines={1}>
+                        {t('billing.done')}
+                      </Text>
+                    </Pressable>
+                    {editingUnlocked ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        disabled={busy || displayLines.length === 0}
+                        onPress={onReprintBill}
+                        className="h-12 min-w-0 flex-1 items-center justify-center rounded-lg border border-line bg-canvas px-2 disabled:opacity-50"
+                      >
+                        <Text className="text-center text-sm font-semibold text-ink" numberOfLines={1}>
+                          {t('billing.reprint')}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={busy || displayLines.length === 0}
+                      onPress={onCollectPayment}
+                      className="h-12 min-w-0 flex-[1.4] items-center justify-center rounded-lg bg-accent px-2 disabled:opacity-50"
+                    >
+                      <Text className="text-center text-sm font-semibold text-accent-ink" numberOfLines={1}>
+                        {t('billing.collectPayment')}
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <View className="flex-row gap-2">
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={busy}
+                      onPress={onCancel}
+                      className="h-12 min-w-0 flex-1 items-center justify-center rounded-lg border border-line bg-canvas px-2 disabled:opacity-50"
+                    >
+                      <Text className="text-center text-sm font-semibold text-muted" numberOfLines={1}>
+                        {t('common.cancel')}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={busy || displayLines.length === 0}
+                      onPress={onGenerateBill}
+                      className="h-12 min-w-0 flex-[1.4] items-center justify-center rounded-lg bg-accent px-2 disabled:opacity-50"
+                    >
+                      <Text className="text-center text-sm font-semibold text-accent-ink" numberOfLines={1}>
+                        {t('billing.generateBill')}
+                      </Text>
+                    </Pressable>
+                  </View>
+                )}
               </View>
             ) : (
               <View>
@@ -653,48 +790,13 @@ export function OrderCartScreen({ target, parent }: { target: CartTarget; parent
             order={order}
             submitting={billing.isSubmitting}
             errorCode={billing.errorCode}
-            shareNotice={shareNotice === 'printFailed' ? 'printFailed' : null}
-            draftPreview={draftPreview}
             onClose={() => {
               if (!billing.isSubmitting) {
                 setPaymentOpen(false);
-                setShareNotice(null);
               }
             }}
             onSubmit={(payment) => {
               void onCollect(payment);
-            }}
-            onPrint={(preview, payment) => {
-              void (async () => {
-                if (billing.isSubmitting || closingBill || !currentUser || !order) {
-                  return;
-                }
-                setClosingBill(true);
-                setShareNotice(null);
-                // Native PrintManager sits under RN Modal; Android resolves as soon as
-                // the dialog opens, so keep the sheet closed afterward.
-                setPaymentOpen(false);
-                try {
-                  await afterModalDismissed();
-                  const ok = await billing.printPreview(preview);
-                  if (!ok) {
-                    setPaymentOpen(true);
-                    setShareNotice('printFailed');
-                    return;
-                  }
-                  // Printed total must still match the live bill — abort if cart changed mid-print.
-                  const live = await getOrder(currentUser.tenantId, order.id);
-                  if (Math.round(live.totalAmount * 100) !== Math.round(payment.paidAmount * 100)) {
-                    setPaymentOpen(true);
-                    Alert.alert(t('billing.sheetTitle'), t('billing.errors.unknown'));
-                    return;
-                  }
-                  // Successful bill print settles the order (counter + table).
-                  await onCollect(payment);
-                } finally {
-                  setClosingBill(false);
-                }
-              })();
             }}
           />
 

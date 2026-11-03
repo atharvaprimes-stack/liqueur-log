@@ -2,18 +2,19 @@ import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAuth } from '../context/auth-context';
-import { getOrder, settleOrder } from '../data/repositories/orderRepository';
+import { getOrder, markOrderBilled, settleOrder } from '../data/repositories/orderRepository';
 import {
   aggregateReceiptLines,
   buildReceipt,
   displayBillNumber,
   lineTotalPaise,
   receiptItemLabel,
+  settlementPaymentLabel,
   type ReceiptPayload,
 } from '../domain/billing';
 import { OrderValidationError, orderErrorCode, type OrderErrorCode } from '../domain/errors';
 import { itemNames } from '../domain/models/inventory';
-import { isPaymentMethod, type PaymentMethod, type SaleOrder } from '../domain/models/orders';
+import type { SaleOrder } from '../domain/models/orders';
 import type { ReceiptCopy } from '../domain/receiptDocument';
 import { printReceipt, shareReceipt, type ShareReceiptResult } from '../printing/receiptFile';
 
@@ -28,13 +29,14 @@ export function useBilling(): {
   clearError: () => void;
   collectAndClose: (
     orderId: string,
-    payment: { method: PaymentMethod; paidAmount: number },
+    payment: { cashAmount: number; upiAmount: number },
   ) => Promise<SaleOrder>;
+  markBilled: (orderId: string) => Promise<SaleOrder>;
   shareBill: (orderId: string) => Promise<ShareReceiptResult | 'error'>;
   printBill: (orderId: string) => Promise<boolean>;
   sharePreview: (preview: BillPreview) => Promise<ShareReceiptResult | 'error'>;
   printPreview: (preview: BillPreview) => Promise<boolean>;
-  draftReceiptPreview: (order: SaleOrder, method: PaymentMethod) => BillPreview | null;
+  draftReceiptPreview: (order: SaleOrder) => BillPreview | null;
   receiptPreview: (order: SaleOrder) => BillPreview | null;
 } {
   const { t, i18n } = useTranslation();
@@ -44,10 +46,35 @@ export function useBilling(): {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorCode, setErrorCode] = useState<OrderErrorCode | null>(null);
 
+  const paymentLabelFor = useCallback(
+    (order: Pick<SaleOrder, 'paymentMethod' | 'cashAmount' | 'upiAmount'>) => {
+      if (order.paymentMethod === 'Other') {
+        return t('billing.methods.Other');
+      }
+      return settlementPaymentLabel(order.cashAmount, order.upiAmount, {
+        cash: t('billing.methods.Cash'),
+        upi: t('billing.methods.UPI'),
+        split: (cash, upi) =>
+          t('billing.methods.splitDetail', {
+            cashLabel: t('billing.methods.Cash'),
+            cashAmount: cash,
+            upiLabel: t('billing.methods.UPI'),
+            upiAmount: upi,
+          }),
+      });
+    },
+    [t],
+  );
+
   const receiptFor = useCallback(
     (
       order: SaleOrder,
-      payment: { method: PaymentMethod; paidAmount: number; closedAt: number; isCredit: boolean },
+      payment: {
+        paymentLabel: string;
+        paidAmount: number;
+        closedAt: number;
+        isCredit: boolean;
+      },
     ): ReceiptPayload => {
       if (!currentTenant) {
         throw new OrderValidationError('unknown');
@@ -77,7 +104,7 @@ export function useBilling(): {
         ),
         totalAmount: order.totalAmount,
         paidAmount: payment.paidAmount,
-        paymentLabel: t(`billing.methods.${payment.method}`),
+        paymentLabel: payment.paymentLabel,
         isCredit: payment.isCredit,
         labels: {
           billNo: t('billing.billNo', { id: displayBillNumber(order.sequence) }),
@@ -101,13 +128,13 @@ export function useBilling(): {
         throw new OrderValidationError('unknown');
       }
       return receiptFor(order, {
-        method: order.paymentMethod,
+        paymentLabel: paymentLabelFor(order),
         paidAmount: order.paidAmount,
         closedAt: order.closedAt,
         isCredit: order.isCredit,
       });
     },
-    [receiptFor],
+    [paymentLabelFor, receiptFor],
   );
 
   const copyFor = useCallback(
@@ -127,8 +154,8 @@ export function useBilling(): {
   );
 
   const collectAndClose = useCallback(
-    async (orderId: string, payment: { method: PaymentMethod; paidAmount: number }) => {
-      if (!tenantId || !actorId || !isPaymentMethod(payment.method)) {
+    async (orderId: string, payment: { cashAmount: number; upiAmount: number }) => {
+      if (!tenantId || !actorId) {
         throw new OrderValidationError('unknown');
       }
       setIsSubmitting(true);
@@ -138,9 +165,29 @@ export function useBilling(): {
           tenantId,
           actorId,
           orderId,
-          method: payment.method,
-          paidAmount: payment.paidAmount,
+          cashAmount: payment.cashAmount,
+          upiAmount: payment.upiAmount,
         });
+      } catch (error) {
+        const code = orderErrorCode(error);
+        setErrorCode(code);
+        throw error;
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [actorId, tenantId],
+  );
+
+  const markBilled = useCallback(
+    async (orderId: string) => {
+      if (!tenantId || !actorId) {
+        throw new OrderValidationError('unknown');
+      }
+      setIsSubmitting(true);
+      setErrorCode(null);
+      try {
+        return await markOrderBilled({ tenantId, actorId, orderId });
       } catch (error) {
         const code = orderErrorCode(error);
         setErrorCode(code);
@@ -219,14 +266,14 @@ export function useBilling(): {
   );
 
   const draftReceiptPreview = useCallback(
-    (order: SaleOrder, method: PaymentMethod) => {
-      if (!isPaymentMethod(method) || order.lines.length === 0 || !currentTenant) {
+    (order: SaleOrder) => {
+      if (order.lines.length === 0 || !currentTenant) {
         return null;
       }
       try {
         const receipt = receiptFor(order, {
-          method,
-          paidAmount: order.totalAmount,
+          paymentLabel: '',
+          paidAmount: 0,
           closedAt: Date.now(),
           isCredit: false,
         });
@@ -258,6 +305,7 @@ export function useBilling(): {
     errorCode,
     clearError: () => setErrorCode(null),
     collectAndClose,
+    markBilled,
     shareBill,
     printBill,
     sharePreview,
