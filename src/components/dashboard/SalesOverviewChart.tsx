@@ -79,19 +79,6 @@ export function SalesOverviewChart({ last7Days, last12Months, locale }: SalesOve
 
       <View className="mt-3 flex-row rounded-2xl bg-canvas p-1">
         <PeriodToggle
-          label={t('home.chart.saleValue')}
-          selected={metric === 'saleValue'}
-          onPress={() => setMetric('saleValue')}
-        />
-        <PeriodToggle
-          label={t('home.chart.orderCount')}
-          selected={metric === 'orderCount'}
-          onPress={() => setMetric('orderCount')}
-        />
-      </View>
-
-      <View className="mt-2 flex-row rounded-2xl bg-canvas p-1">
-        <PeriodToggle
           label={t('home.chart.days7')}
           selected={period === 'days7'}
           onPress={() => setPeriod('days7')}
@@ -100,6 +87,19 @@ export function SalesOverviewChart({ last7Days, last12Months, locale }: SalesOve
           label={t('home.chart.months12')}
           selected={period === 'months12'}
           onPress={() => setPeriod('months12')}
+        />
+      </View>
+
+      <View className="mt-2 flex-row rounded-2xl bg-canvas p-1">
+        <PeriodToggle
+          label={t('home.chart.saleValue')}
+          selected={metric === 'saleValue'}
+          onPress={() => setMetric('saleValue')}
+        />
+        <PeriodToggle
+          label={t('home.chart.orderCount')}
+          selected={metric === 'orderCount'}
+          onPress={() => setMetric('orderCount')}
         />
       </View>
 

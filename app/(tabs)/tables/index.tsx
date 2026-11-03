@@ -32,7 +32,7 @@ const MARK_WIDTH_RATIO = 0.78;
 const MARK_MIN = 64;
 const MARK_MAX = 112;
 
-type CardKind = 'available' | 'occupied' | 'pending';
+type CardKind = 'available' | 'occupied' | 'pending' | 'payDue';
 
 type FloorCardTone = {
   /** Card background. */
@@ -48,6 +48,42 @@ type FloorCardTone = {
   /** Table number on the solid plate. */
   numberColor: string;
   glow?: string;
+};
+
+const PAY_DUE_TONES: Record<ThemeId, FloorCardTone> = {
+  light: {
+    base: '#EFF6FF',
+    tint: 'transparent',
+    ink: '#1D4ED8',
+    muted: '#2563EB',
+    badgeBackground: 'rgba(37, 99, 235, 0.12)',
+    border: 'rgba(37, 99, 235, 0.28)',
+    glow: 'rgba(59, 130, 246, 0.4)',
+    plateFill: '#1D4ED8',
+    numberColor: '#EFF6FF',
+  },
+  dark: {
+    base: '#1E293B',
+    tint: 'rgba(96, 165, 250, 0.12)',
+    ink: '#60A5FA',
+    muted: '#93C5FD',
+    badgeBackground: 'rgba(96, 165, 250, 0.2)',
+    border: 'rgba(96, 165, 250, 0.45)',
+    glow: 'rgba(96, 165, 250, 0.5)',
+    plateFill: '#2563EB',
+    numberColor: '#EFF6FF',
+  },
+  amber: {
+    base: '#211710',
+    tint: 'rgba(96, 165, 250, 0.14)',
+    ink: '#60A5FA',
+    muted: '#93C5FD',
+    badgeBackground: 'rgba(96, 165, 250, 0.22)',
+    border: 'rgba(96, 165, 250, 0.5)',
+    glow: 'rgba(96, 165, 250, 0.55)',
+    plateFill: '#1D4ED8',
+    numberColor: '#EFF6FF',
+  },
 };
 
 const FLOOR_CARD_TONES: Record<ThemeId, Record<CardKind, FloorCardTone>> = {
@@ -83,6 +119,7 @@ const FLOOR_CARD_TONES: Record<ThemeId, Record<CardKind, FloorCardTone>> = {
       plateFill: '#B45309',
       numberColor: '#FFFBEB',
     },
+    payDue: PAY_DUE_TONES.light,
   },
   dark: {
     available: {
@@ -116,6 +153,7 @@ const FLOOR_CARD_TONES: Record<ThemeId, Record<CardKind, FloorCardTone>> = {
       plateFill: '#D97706',
       numberColor: '#FFFBEB',
     },
+    payDue: PAY_DUE_TONES.dark,
   },
   amber: {
     available: {
@@ -149,6 +187,7 @@ const FLOOR_CARD_TONES: Record<ThemeId, Record<CardKind, FloorCardTone>> = {
       plateFill: '#B45309',
       numberColor: '#FFFBEB',
     },
+    payDue: PAY_DUE_TONES.amber,
   },
 };
 
@@ -223,7 +262,9 @@ export default function TablesScreen() {
                 <Text className="text-base font-semibold text-accent-ink">{t('tables.counter')}</Text>
                 {counter ? (
                   <Text className="mt-0.5 text-sm font-medium text-accent-ink">
-                    {t('tables.counterOpen', { amount: formatInr(counter.totalAmount) })}
+                    {counter.billedAt
+                      ? t('tables.counterPayDue', { amount: formatInr(counter.totalAmount) })
+                      : t('tables.counterOpen', { amount: formatInr(counter.totalAmount) })}
                   </Text>
                 ) : null}
               </View>
@@ -341,13 +382,20 @@ function TableCard({ table, onPress }: { table: FloorTable; onPress: () => void 
   const { theme, palette } = useTheme();
   const order = table.order;
   const kind: CardKind =
-    table.pendingRequestCount > 0 ? 'pending' : order !== null ? 'occupied' : 'available';
+    table.pendingRequestCount > 0
+      ? 'pending'
+      : order?.billedAt
+        ? 'payDue'
+        : order !== null
+          ? 'occupied'
+          : 'available';
   const tone = FLOOR_CARD_TONES[theme][kind];
   const pulse = useRef(new Animated.Value(0)).current;
   const [markSize, setMarkSize] = useState(MARK_MIN);
+  const pulseKind = kind === 'pending' || kind === 'payDue';
 
   useEffect(() => {
-    if (kind !== 'pending') {
+    if (!pulseKind) {
       pulse.setValue(0);
       return undefined;
     }
@@ -362,34 +410,37 @@ function TableCard({ table, onPress }: { table: FloorTable; onPress: () => void 
     return () => {
       loop.stop();
     };
-  }, [kind, pulse]);
+  }, [pulse, pulseKind]);
 
   const statusKey =
     kind === 'pending'
       ? 'tables.statusPending'
-      : kind === 'occupied'
-        ? 'tables.statusOccupied'
-        : 'tables.statusAvailable';
+      : kind === 'payDue'
+        ? 'tables.statusPayDue'
+        : kind === 'occupied'
+          ? 'tables.statusOccupied'
+          : 'tables.statusAvailable';
 
   const statusLabel =
     kind === 'pending'
       ? t('tables.pendingRequest', { count: table.pendingRequestCount })
-      : order
-        ? `${t('tables.occupied')} ${formatInr(order.totalAmount)}`
-        : t('tables.available');
+      : kind === 'payDue' && order
+        ? `${t('tables.payDue')} ${formatInr(order.totalAmount)}`
+        : order
+          ? `${t('tables.occupied')} ${formatInr(order.totalAmount)}`
+          : t('tables.available');
 
-  const borderColor =
-    kind === 'pending'
-      ? pulse.interpolate({
-          inputRange: [0, 1],
-          outputRange: [tone.border, tone.glow ?? tone.border],
-        })
-      : tone.border;
+  const borderColor = pulseKind
+    ? pulse.interpolate({
+        inputRange: [0, 1],
+        outputRange: [tone.border, tone.glow ?? tone.border],
+      })
+    : tone.border;
 
   const cardShadow =
     kind === 'available'
       ? getSoftShadow(palette)
-      : kind === 'pending'
+      : pulseKind
         ? ({
             shadowColor: tone.glow ?? tone.border,
             shadowOffset: { width: 0, height: 0 },
@@ -484,7 +535,9 @@ function TableCard({ table, onPress }: { table: FloorTable; onPress: () => void 
               <Text className="text-[11px] font-medium" numberOfLines={1} style={{ color: tone.muted }}>
                 {kind === 'pending'
                   ? t('tables.pendingRequest', { count: table.pendingRequestCount })
-                  : t('tables.itemCount', { count: order.itemCount })}
+                  : kind === 'payDue'
+                    ? t('tables.payDueHint')
+                    : t('tables.itemCount', { count: order.itemCount })}
               </Text>
             </View>
           ) : null}

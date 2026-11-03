@@ -141,6 +141,13 @@ async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
   await ensureItemSerialNumbers(database);
   await ensureServiceStations(database);
   await ensureOrderSplitPayments(database);
+  // Inline so a partial hot-reload cannot call a missing helper during startup.
+  await ensureColumn(
+    database,
+    'orders',
+    'billed_at',
+    'ALTER TABLE orders ADD COLUMN billed_at INTEGER',
+  );
   await ensureStationVisibility(database);
   await assertSchemaReady(database);
   await maybeResetLocalLedger(database);
@@ -521,6 +528,7 @@ async function ensureOrderSplitPayments(database: SQLite.SQLiteDatabase): Promis
         is_credit INTEGER NOT NULL DEFAULT 0 CHECK (is_credit IN (0, 1)),
         order_sequence_string TEXT NOT NULL,
         created_at INTEGER NOT NULL,
+        billed_at INTEGER,
         closed_at INTEGER,
         created_by TEXT NOT NULL,
         updated_at INTEGER NOT NULL DEFAULT 0,
@@ -557,14 +565,14 @@ async function ensureOrderSplitPayments(database: SQLite.SQLiteDatabase): Promis
       INSERT INTO orders_next (
         id, tenant_id, table_id, order_type, status, total_amount, paid_amount,
         cash_amount, upi_amount, payment_method, is_credit, order_sequence_string,
-        created_at, closed_at, created_by, updated_at
+        created_at, billed_at, closed_at, created_by, updated_at
       )
       SELECT
         id, tenant_id, table_id, order_type, status, total_amount, paid_amount,
         CASE WHEN payment_method = 'Cash' THEN paid_amount ELSE 0 END,
         CASE WHEN payment_method = 'UPI' THEN paid_amount ELSE 0 END,
         payment_method, is_credit, order_sequence_string,
-        created_at, closed_at, created_by, updated_at
+        created_at, NULL, closed_at, created_by, updated_at
       FROM orders;
 
       DROP TABLE orders;

@@ -401,7 +401,7 @@ async function readRecord(
     const order = await database.getFirstAsync<Record<string, unknown>>(
       `SELECT id, tenant_id, table_id, order_type, status, total_amount, paid_amount,
               cash_amount, upi_amount, payment_method,
-              is_credit, order_sequence_string, created_at, closed_at, created_by, updated_at
+              is_credit, order_sequence_string, created_at, billed_at, closed_at, created_by, updated_at
        FROM orders WHERE id = ? AND tenant_id = ?`,
       [entityId, tenantId],
     );

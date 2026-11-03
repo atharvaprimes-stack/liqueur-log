@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAuth } from '../context/auth-context';
-import { getOrder, settleOrder } from '../data/repositories/orderRepository';
+import { getOrder, markOrderBilled, settleOrder } from '../data/repositories/orderRepository';
 import {
   aggregateReceiptLines,
   buildReceipt,
@@ -31,6 +31,7 @@ export function useBilling(): {
     orderId: string,
     payment: { cashAmount: number; upiAmount: number },
   ) => Promise<SaleOrder>;
+  markBilled: (orderId: string) => Promise<SaleOrder>;
   shareBill: (orderId: string) => Promise<ShareReceiptResult | 'error'>;
   printBill: (orderId: string) => Promise<boolean>;
   sharePreview: (preview: BillPreview) => Promise<ShareReceiptResult | 'error'>;
@@ -178,6 +179,26 @@ export function useBilling(): {
     [actorId, tenantId],
   );
 
+  const markBilled = useCallback(
+    async (orderId: string) => {
+      if (!tenantId || !actorId) {
+        throw new OrderValidationError('unknown');
+      }
+      setIsSubmitting(true);
+      setErrorCode(null);
+      try {
+        return await markOrderBilled({ tenantId, actorId, orderId });
+      } catch (error) {
+        const code = orderErrorCode(error);
+        setErrorCode(code);
+        throw error;
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [actorId, tenantId],
+  );
+
   const sharePreview = useCallback(async (preview: BillPreview) => {
     try {
       return await shareReceipt(preview.receipt, preview.copy);
@@ -284,6 +305,7 @@ export function useBilling(): {
     errorCode,
     clearError: () => setErrorCode(null),
     collectAndClose,
+    markBilled,
     shareBill,
     printBill,
     sharePreview,

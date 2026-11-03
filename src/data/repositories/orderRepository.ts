@@ -31,7 +31,7 @@ import {
 } from '../../domain/models/orders';
 
 const ORDER_COLUMNS = `id, tenant_id, table_id, order_type, status, total_amount, paid_amount,
-  cash_amount, upi_amount, payment_method, is_credit, order_sequence_string, created_at, closed_at`;
+  cash_amount, upi_amount, payment_method, is_credit, order_sequence_string, created_at, billed_at, closed_at`;
 
 const LINE_COLUMNS = `id, item_id, name_en, name_mr, liquor_type, service_station, volume_ml, quantity, unit_price`;
 
@@ -49,6 +49,7 @@ type OrderRow = {
   is_credit: number;
   order_sequence_string: string;
   created_at: number;
+  billed_at: number | null;
   closed_at: number | null;
   item_count?: number | null;
 };
@@ -398,6 +399,54 @@ export async function releaseEmptyOrder(input: {
   requestSync();
 }
 
+/** Records that a draft bill was printed; order stays OPEN awaiting payment. */
+export async function markOrderBilled(input: {
+  tenantId: string;
+  actorId: string;
+  orderId: string;
+}): Promise<SaleOrder> {
+  const saved = await withLockedTransaction(async (database) => {
+    await assertActor(database, input.tenantId, input.actorId);
+    const order = await requireOpenOrder(database, input.tenantId, input.orderId);
+    const lines = await database.getAllAsync<{ quantity: number }>(
+      'SELECT quantity FROM order_items WHERE order_id = ?',
+      [order.id],
+    );
+    if (lines.length === 0) {
+      throw new OrderValidationError('empty');
+    }
+
+    const billedAt = Date.now();
+    const updated = await database.runAsync(
+      `UPDATE orders
+       SET billed_at = ?, updated_at = ?
+       WHERE id = ? AND tenant_id = ? AND status = 'OPEN'`,
+      [billedAt, billedAt, order.id, input.tenantId],
+    );
+    if (updated.changes !== 1) {
+      throw new OrderValidationError('closed');
+    }
+
+    const saved = await readOrder(database, input.tenantId, order.id);
+    await insertActivity(database, {
+      tenantId: input.tenantId,
+      actorId: input.actorId,
+      action: 'order.billed',
+      entity: 'orders',
+      entityId: order.id,
+      detail: {
+        sequence: saved.sequence,
+        totalAmount: saved.totalAmount,
+        ...(saved.tableId ? { tableId: saved.tableId } : {}),
+      },
+    });
+    await enqueueUpsert(database, 'orders', order.id);
+    return saved;
+  });
+  requestSync();
+  return saved;
+}
+
 export async function settleOrder(input: {
   tenantId: string;
   actorId: string;
@@ -487,8 +536,8 @@ async function insertOrder(
     `INSERT INTO orders (
        id, tenant_id, table_id, order_type, status, total_amount, paid_amount,
        cash_amount, upi_amount, payment_method, is_credit, order_sequence_string,
-       created_at, closed_at, created_by, updated_at
-     ) VALUES (?, ?, ?, ?, 'OPEN', 0, 0, 0, 0, NULL, 0, ?, ?, NULL, ?, ?)`,
+       created_at, billed_at, closed_at, created_by, updated_at
+     ) VALUES (?, ?, ?, ?, 'OPEN', 0, 0, 0, 0, NULL, 0, ?, ?, NULL, NULL, ?, ?)`,
     [orderId, input.tenantId, input.tableId, input.orderType, sequence, createdAt, input.actorId, createdAt],
   );
   await enqueueUpsert(database, 'orders', orderId);
@@ -733,6 +782,7 @@ function mapSummary(row: OrderRow): OrderSummary {
     isCredit: row.is_credit === 1,
     sequence: row.order_sequence_string,
     createdAt: Number(row.created_at),
+    billedAt: row.billed_at === null || row.billed_at === undefined ? null : Number(row.billed_at),
     closedAt: row.closed_at === null ? null : Number(row.closed_at),
     itemCount: Math.max(0, Math.round(Number(row.item_count) || 0)),
   };

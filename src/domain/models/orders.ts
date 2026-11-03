@@ -35,6 +35,8 @@ export type OrderSummary = {
   isCredit: boolean;
   sequence: string;
   createdAt: number;
+  /** Set when a draft bill has been printed; cleared when the order is paid. */
+  billedAt: number | null;
   closedAt: number | null;
   /** Total units on the order (sum of line quantities). */
   itemCount: number;

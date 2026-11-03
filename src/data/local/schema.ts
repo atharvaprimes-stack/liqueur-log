@@ -219,6 +219,7 @@ CREATE TABLE IF NOT EXISTS orders (
   is_credit INTEGER NOT NULL DEFAULT 0 CHECK (is_credit IN (0, 1)),
   order_sequence_string TEXT NOT NULL,
   created_at INTEGER NOT NULL,
+  billed_at INTEGER,
   closed_at INTEGER,
   created_by TEXT NOT NULL,
   updated_at INTEGER NOT NULL DEFAULT 0,

@@ -451,9 +451,17 @@ async function applyOrder(database: SQLiteDatabase, tenantId: string, order: Rec
     }
     await database.runAsync(
       `UPDATE orders
-       SET total_amount = ?, updated_at = ?
+       SET total_amount = ?,
+           billed_at = COALESCE(?, billed_at),
+           updated_at = ?
        WHERE id = ? AND tenant_id = ? AND status = 'OPEN'`,
-      [numberField(order, 'total_amount'), remoteVersion, id, tenantId],
+      [
+        numberField(order, 'total_amount'),
+        remoteBilledAt(order),
+        remoteVersion,
+        id,
+        tenantId,
+      ],
     );
   });
   if (saved === 'ok') {
@@ -474,13 +482,36 @@ async function applyOrder(database: SQLiteDatabase, tenantId: string, order: Rec
       return;
     }
     await database.runAsync(
-      `UPDATE orders SET total_amount = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND status = 'OPEN'`,
-      [numberField(order, 'total_amount'), remoteVersion, id, tenantId],
+      `UPDATE orders
+       SET total_amount = ?,
+           billed_at = COALESCE(?, billed_at),
+           updated_at = ?
+       WHERE id = ? AND tenant_id = ? AND status = 'OPEN'`,
+      [
+        numberField(order, 'total_amount'),
+        remoteBilledAt(order),
+        remoteVersion,
+        id,
+        tenantId,
+      ],
     );
   });
   if (retried === 'ok') {
     await rememberAck(database, 'orders', id);
   }
+}
+
+/** Keep a local Pay-due stamp when the remote snapshot omits or nulls billed_at. */
+function remoteBilledAt(order: Record<string, unknown>): number | null {
+  if (!Object.prototype.hasOwnProperty.call(order, 'billed_at')) {
+    return null;
+  }
+  const value = order.billed_at;
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const billedAt = Math.round(numberField(order, 'billed_at'));
+  return billedAt > 0 ? billedAt : null;
 }
 
 async function applyActivity(
@@ -567,8 +598,8 @@ async function insertOrderShell(
     `INSERT INTO orders (
        id, tenant_id, table_id, order_type, status, total_amount, paid_amount,
        cash_amount, upi_amount, payment_method, is_credit, order_sequence_string,
-       created_at, closed_at, created_by, updated_at
-     ) VALUES (?, ?, ?, ?, 'OPEN', 0, 0, 0, 0, NULL, 0, ?, ?, NULL, ?, ?)`,
+       created_at, billed_at, closed_at, created_by, updated_at
+     ) VALUES (?, ?, ?, ?, 'OPEN', 0, 0, 0, 0, NULL, 0, ?, ?, NULL, NULL, ?, ?)`,
     [
       textField(order, 'id'),
       tenantId,
